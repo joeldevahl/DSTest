@@ -35,13 +35,13 @@
     <FxCompile Include="MeshletPS.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
+    <FxCompile Include="ShaderCommon.hlsl">
+      <Filter>Resource Files</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Render.h">
       <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="ShaderCommon.hlsl">
-      <Filter>Resource Files</Filter>
     </ClInclude>
     <ClInclude Include="d3dx12.h">
       <Filter>Header Files</Filter>
