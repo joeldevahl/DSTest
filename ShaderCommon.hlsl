@@ -15,7 +15,14 @@ struct Constants
 
 struct Mesh
 {
+    uint cluster_start;
+    uint cluster_count;
+};
 
+struct Cluster
+{
+    uint vertex_start;
+    uint vertex_count;
 };
 
 struct Material
@@ -23,7 +30,5 @@ struct Material
     uint texture_id;
 };
 
+
 ConstantBuffer<Constants> constants : register(b0);
-StructuredBuffer<Mesh> meshes : register(t0);
-StructuredBuffer<Material> materials : register(t1);
-Texture2D textures[] : register(t2);

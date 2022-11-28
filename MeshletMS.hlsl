@@ -24,6 +24,10 @@ void main(
 {
     SetMeshOutputCounts(4, 2);
 
+	StructuredBuffer<Mesh> meshes = ResourceDescriptorHeap[0];
+	StructuredBuffer<Cluster> clusters = ResourceDescriptorHeap[1];
+	ByteAddressBuffer mesh_data = ResourceDescriptorHeap[2];
+
     if (gtid < 2)
     {
 		tris[gtid] = gtid == 0 ? uint3(0, 1, 2) : uint3(1, 3, 2);

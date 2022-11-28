@@ -5,6 +5,10 @@ groupshared Payload meshletPayload;
 [NumThreads(1, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint gtid : SV_GroupThreadID)
 {
+	StructuredBuffer<Mesh> meshes = ResourceDescriptorHeap[0];
+	StructuredBuffer<Cluster> clusters = ResourceDescriptorHeap[1];
+	ByteAddressBuffer mesh_data = ResourceDescriptorHeap[2];
+
 	if (gtid == 0)
 	{
 		float scale = 3.0f;
