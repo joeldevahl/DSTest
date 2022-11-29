@@ -24,10 +24,6 @@ void main(
 {
     SetMeshOutputCounts(4, 2);
 
-	StructuredBuffer<Mesh> meshes = ResourceDescriptorHeap[0];
-	StructuredBuffer<Cluster> clusters = ResourceDescriptorHeap[1];
-	ByteAddressBuffer mesh_data = ResourceDescriptorHeap[2];
-
     if (gtid < 2)
     {
 		tris[gtid] = gtid == 0 ? uint3(0, 1, 2) : uint3(1, 3, 2);
@@ -37,13 +33,7 @@ void main(
 
     if (gtid < 4)
     {
-        float4 vert;
-        switch (gtid) {
-        case 0: vert = float4(-1.0f,  1.0f, 0.0f, 1.0f); break; // top-left
-        case 1: vert = float4( 1.0f,  1.0f, 0.0f, 1.0f); break; // top-right
-        case 2: vert = float4(-1.0f, -1.0f, 0.0f, 1.0f); break; // bottom-left
-        case 3: vert = float4( 1.0f, -1.0f, 0.0f, 1.0f); break; // bottom-right
-        }
+        float4 vert = GetVertex(gtid);
 
         vert.xyz += meshletPayload.offset;
 

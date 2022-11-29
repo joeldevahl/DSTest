@@ -5,6 +5,30 @@
 
 struct Render;
 
+struct Vertex
+{
+    float Position[4];
+};
+
+struct Instance
+{
+    float Position[3];
+    UINT MeshIndex;
+};
+
+struct Mesh
+{
+    UINT ClusterStart;
+    UINT ClusterCount;
+};
+
+struct Cluster
+{
+    UINT IndexStart;
+    UINT IndexCount;
+};
+
+
 Render* CreateRender(UINT width, UINT height);
 void Destroy(Render* render);
 

@@ -42,27 +42,16 @@ _declspec(align(256u)) struct SceneConstantBuffer
     UINT NumMaterials;
 };
 
-struct Mesh
-{
-    UINT ClusterStart;
-    UINT ClusterCount;
-};
-
-struct Cluster
-{
-    UINT VertexStart;
-    UINT VertexCount;
-};
-
 struct Render
 {
     UINT width = 1280;
     UINT height = 720;
 
-    com_ptr<IDXGIFactory6> dxgi_factory;
+    com_ptr<IDXGIFactory6> dxgiFactory;
     com_ptr<ID3D12Device6> device;
-    com_ptr<IDStorageFactory> storage_factory;
+    com_ptr<IDStorageFactory> storageFactory;
     com_ptr<ID3D12CommandQueue> commandQueue;
+    com_ptr<IDStorageQueue> storageQueue;
     com_ptr<IDXGISwapChain3> swapChain;
     UINT frameIndex;
 
@@ -85,9 +74,11 @@ struct Render
 
     SceneConstantBuffer constantBufferData;
     com_ptr<ID3D12Resource> constantBuffer;
+    com_ptr<ID3D12Resource> instancesBuffer;
     com_ptr<ID3D12Resource> meshesBuffer;
     com_ptr<ID3D12Resource> clustersBuffer;
     com_ptr<ID3D12Resource> vertexDataBuffer;
+    com_ptr<ID3D12Resource> indexDataBuffer;
     com_ptr<ID3D12Resource> materialsBuffer;
     char* cbvDataBegin;
 
@@ -189,11 +180,10 @@ static com_ptr<ID3D12DescriptorHeap> CreateDescriptorHeap(Render* render, D3D12_
     return heap;
 }
 
-static com_ptr<ID3D12Resource> CreateBuffer(Render* render, UINT64 size, D3D12_HEAP_TYPE heapType = D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON)
+static void CreateBufferResource(Render* render, com_ptr<ID3D12Resource> &resource, UINT64 size, D3D12_HEAP_TYPE heapType = D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON)
 {
 	auto heapProps = CD3DX12_HEAP_PROPERTIES(heapType);
 	auto resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(size);
-    com_ptr<ID3D12Resource> resource;
 	check_hresult(render->device->CreateCommittedResource(
 		&heapProps,
 		D3D12_HEAP_FLAG_NONE,
@@ -201,8 +191,54 @@ static com_ptr<ID3D12Resource> CreateBuffer(Render* render, UINT64 size, D3D12_H
 		state,
 		nullptr,
 		IID_PPV_ARGS(resource.put())));
+}
 
-    return resource;
+static void CreateBufferSRV(Render* render, const com_ptr<ID3D12Resource> &resource, UINT count, UINT stride, D3D12_CPU_DESCRIPTOR_HANDLE handle, DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN, D3D12_BUFFER_SRV_FLAGS flags = D3D12_BUFFER_SRV_FLAG_NONE)
+{
+	D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
+	desc.Format = format;
+	desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+	desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	desc.Buffer.FirstElement = 0;
+	desc.Buffer.NumElements = count;
+	desc.Buffer.StructureByteStride = stride;
+	desc.Buffer.Flags = flags;
+
+	render->device->CreateShaderResourceView(resource.get(), &desc, handle);
+}
+
+static void CreateBuffer(Render* render, com_ptr<ID3D12Resource> &resource, UINT64 count, UINT64 stride, UINT descriptorOffset, bool isRaw = false)
+{
+    UINT64 size = stride * count;
+	CreateBufferResource(render, resource, size);
+
+	CD3DX12_CPU_DESCRIPTOR_HANDLE handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), descriptorOffset, render->uniDescriptorSize);
+    DXGI_FORMAT format = isRaw ? DXGI_FORMAT_R32_TYPELESS : DXGI_FORMAT_UNKNOWN;
+    D3D12_BUFFER_SRV_FLAGS flags = isRaw ? D3D12_BUFFER_SRV_FLAG_RAW : D3D12_BUFFER_SRV_FLAG_NONE;
+	CreateBufferSRV(render, resource, isRaw ? (size / 4) : count, isRaw ? 0 : stride, handle, format, flags);
+}
+
+static void LoadFileToGPU(Render* render, LPCWSTR fileName, ID3D12Resource* resource)
+{
+	IDStorageFile* file; // TODO: we deliberately do not release this file since it needs to stay open until the request finishes
+	check_hresult(render->storageFactory->OpenFile(fileName, IID_PPV_ARGS(&file)));
+
+	BY_HANDLE_FILE_INFORMATION info = {};
+	check_hresult(file->GetFileInformation(&info));
+
+	DSTORAGE_REQUEST request = {};
+	request.Options.SourceType = DSTORAGE_REQUEST_SOURCE_FILE;
+	request.Options.DestinationType = DSTORAGE_REQUEST_DESTINATION_BUFFER;
+    request.Options.CompressionFormat = DSTORAGE_COMPRESSION_FORMAT_NONE;
+	request.Source.File.Source = file;
+	request.Source.File.Offset = 0;
+	request.Source.File.Size = info.nFileSizeLow;
+	request.UncompressedSize = request.Source.File.Size;
+	request.Destination.Buffer.Resource = resource;
+	request.Destination.Buffer.Offset = 0;
+	request.Destination.Buffer.Size = request.Source.File.Size;
+
+	render->storageQueue->EnqueueRequest(&request);
 }
 
 Render* CreateRender(UINT width, UINT height)
@@ -227,9 +263,6 @@ void Destroy(Render* render)
 
 void Initialize(Render* render, HWND hwnd)
 {
-    UUID experimentalFeatures[] = { D3D12ExperimentalShaderModels };
-    check_hresult(D3D12EnableExperimentalFeatures(1, experimentalFeatures, nullptr, nullptr));
-
     UINT dxgiFactoryFlags = 0;
 #if defined(_DEBUG)
     {
@@ -247,24 +280,39 @@ void Initialize(Render* render, HWND hwnd)
         com_ptr<IDXGIFactory4> initialFactory;
         check_hresult(CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&initialFactory)));
 
-        check_hresult(initialFactory->QueryInterface(IID_PPV_ARGS(&render->dxgi_factory)));
+        check_hresult(initialFactory->QueryInterface(IID_PPV_ARGS(render->dxgiFactory.put())));
     }
 
     bool useWarpDevice = false;
     if (useWarpDevice)
     {
         com_ptr<IDXGIAdapter3> warpAdapter;
-        check_hresult(render->dxgi_factory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter)));
-        check_hresult(D3D12CreateDevice(warpAdapter.get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&render->device)));
+        check_hresult(render->dxgiFactory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter)));
+        check_hresult(D3D12CreateDevice(warpAdapter.get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(render->device.put())));
     }
     else
     {
         com_ptr<IDXGIAdapter4> hardwareAdapter;
-        GetHardwareAdapter(render->dxgi_factory.get(), hardwareAdapter.put());
-        check_hresult(D3D12CreateDevice(hardwareAdapter.get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&render->device)));
+        GetHardwareAdapter(render->dxgiFactory.get(), hardwareAdapter.put());
+        check_hresult(D3D12CreateDevice(hardwareAdapter.get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(render->device.put())));
     }
 
-    check_hresult(DStorageGetFactory(IID_PPV_ARGS(&render->storage_factory)));
+    {
+        DSTORAGE_CONFIGURATION dsConfig{};
+        DStorageSetConfiguration(&dsConfig);
+
+        check_hresult(DStorageGetFactory(IID_PPV_ARGS(render->storageFactory.put())));
+        render->storageFactory->SetDebugFlags(DSTORAGE_DEBUG_BREAK_ON_ERROR | DSTORAGE_DEBUG_SHOW_ERRORS);
+        render->storageFactory->SetStagingBufferSize(32 * 1024 * 1024);
+
+        DSTORAGE_QUEUE_DESC queueDesc = {};
+        queueDesc.Capacity = DSTORAGE_MAX_QUEUE_CAPACITY;
+        queueDesc.Priority = DSTORAGE_PRIORITY_NORMAL;
+        queueDesc.SourceType = DSTORAGE_REQUEST_SOURCE_FILE;
+        queueDesc.Device = render->device.get();
+
+        check_hresult(render->storageFactory->CreateQueue(&queueDesc, IID_PPV_ARGS(render->storageQueue.put())));
+    }
 
     D3D12_COMMAND_QUEUE_DESC queueDesc = {};
     queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
@@ -282,7 +330,7 @@ void Initialize(Render* render, HWND hwnd)
     swapChainDesc.SampleDesc.Count = 1;
 
     com_ptr<IDXGISwapChain1> swapChain1;
-    check_hresult(render->dxgi_factory->CreateSwapChainForHwnd(
+    check_hresult(render->dxgiFactory->CreateSwapChainForHwnd(
         render->commandQueue.get(),
         hwnd,
         &swapChainDesc,
@@ -292,7 +340,7 @@ void Initialize(Render* render, HWND hwnd)
     ));
     check_hresult(swapChain1.as(IID_PPV_ARGS(render->swapChain.put())));
 
-    check_hresult(render->dxgi_factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER));
+    check_hresult(render->dxgiFactory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER));
 
     render->frameIndex = render->swapChain->GetCurrentBackBufferIndex();
 
@@ -384,7 +432,7 @@ void Initialize(Render* render, HWND hwnd)
      */
     {
         const UINT64 constantBufferSize = sizeof(SceneConstantBuffer) * NUM_QUEUED_FRAMES;
-        render->constantBuffer = CreateBuffer(render, constantBufferSize, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+        CreateBufferResource(render, render->constantBuffer, constantBufferSize, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
 
         D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
         cbvDesc.BufferLocation = render->constantBuffer->GetGPUVirtualAddress();
@@ -397,64 +445,16 @@ void Initialize(Render* render, HWND hwnd)
     }
 
     /*
-     * Mesh Pool
+     * Mesh and Instance Pool
      */
     {
         CD3DX12_CPU_DESCRIPTOR_HANDLE baseHandle(render->uniHeap->GetCPUDescriptorHandleForHeapStart());
 
-        // Meshes
-        {
-            const UINT64 bufferSize = sizeof(Mesh) * 1024;
-            render->meshesBuffer = CreateBuffer(render, bufferSize);
-
-            D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
-            desc.Format = DXGI_FORMAT_UNKNOWN;
-            desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-            desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            desc.Buffer.FirstElement = 0;
-            desc.Buffer.NumElements = 1024;
-            desc.Buffer.StructureByteStride = sizeof(Mesh);
-            desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-
-            CD3DX12_CPU_DESCRIPTOR_HANDLE handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(baseHandle, 0, render->uniDescriptorSize);
-            render->device->CreateShaderResourceView(render->meshesBuffer.get(), &desc, handle);
-        }
-
-        // Clusters
-        {
-            const UINT64 bufferSize = sizeof(Cluster) * 1024 * 1024;
-            render->clustersBuffer = CreateBuffer(render, bufferSize);
-
-            D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
-            desc.Format = DXGI_FORMAT_UNKNOWN;
-            desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-            desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            desc.Buffer.FirstElement = 0;
-            desc.Buffer.NumElements = 1024 * 1024;
-            desc.Buffer.StructureByteStride = sizeof(Cluster);
-            desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-
-            CD3DX12_CPU_DESCRIPTOR_HANDLE handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(baseHandle, 1, render->uniDescriptorSize);
-            render->device->CreateShaderResourceView(render->clustersBuffer.get(), &desc, handle);
-        }
-
-        // Vertex Data
-        {
-            const UINT64 bufferSize = sizeof(XMFLOAT4) * 128 * 1024 * 1024;
-            render->vertexDataBuffer = CreateBuffer(render, bufferSize);
-
-            D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
-            desc.Format = DXGI_FORMAT_R32_TYPELESS;
-            desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-            desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            desc.Buffer.FirstElement = 0;
-            desc.Buffer.NumElements = 128 * 1024 * 1024;
-            desc.Buffer.StructureByteStride = 0;
-            desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
-
-            CD3DX12_CPU_DESCRIPTOR_HANDLE handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(baseHandle, 2, render->uniDescriptorSize);
-            render->device->CreateShaderResourceView(render->vertexDataBuffer.get(), &desc, handle);
-        }
+		CreateBuffer(render, render->instancesBuffer, 1024, sizeof(Instance), 0);
+		CreateBuffer(render, render->meshesBuffer, 1024, sizeof(Mesh), 1);
+		CreateBuffer(render, render->clustersBuffer, 1024 * 1024, sizeof(Cluster), 2);
+		CreateBuffer(render, render->vertexDataBuffer, 128 * 1024, 3 * sizeof(float), 3, true);
+		CreateBuffer(render, render->indexDataBuffer, 128 * 1024, sizeof(UINT), 4, true);
     }
 
     /*
@@ -513,7 +513,38 @@ void Initialize(Render* render, HWND hwnd)
     check_hresult(render->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, render->commandAllocators[render->frameIndex].get(), nullptr, IID_PPV_ARGS(render->commandList.put())));
     check_hresult(render->commandList->Close());
 
-    // TODO: upload mesh data here
+    /*
+     * Load data using DirectStorage
+     */
+    {
+        LoadFileToGPU(render, L"instances.raw", render->instancesBuffer.get());
+        LoadFileToGPU(render, L"meshes.raw", render->meshesBuffer.get());
+        LoadFileToGPU(render, L"clusters.raw", render->clustersBuffer.get());
+        LoadFileToGPU(render, L"vertices.raw", render->vertexDataBuffer.get());
+        LoadFileToGPU(render, L"indices.raw", render->indexDataBuffer.get());
+
+        // Issue a fence and wait for it
+        {
+            com_ptr<ID3D12Fence> fence;
+            check_hresult(render->device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fence.put())));
+
+            ScopedHandle fenceEvent(CreateEvent(nullptr, FALSE, FALSE, nullptr));
+            constexpr uint64_t fenceValue = 1;
+            check_hresult(fence->SetEventOnCompletion(fenceValue, fenceEvent.get()));
+            render->storageQueue->EnqueueSignal(fence.get(), fenceValue);
+
+            render->storageQueue->Submit();
+
+            WaitForSingleObject(fenceEvent.get(), INFINITE);
+
+            DSTORAGE_ERROR_RECORD errorRecord{};
+            render->storageQueue->RetrieveErrorRecord(&errorRecord);
+            if (FAILED(errorRecord.FirstFailure.HResult))
+            {
+                __debugbreak();
+            }
+        }
+    }
 
     {
         check_hresult(render->device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(render->fence.put())));

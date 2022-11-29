@@ -1,4 +1,5 @@
 #include "Render.h"
+#include "Generator.h"
 
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -44,6 +45,8 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
 
     RECT windowRect = { 0, 0, width, height };
     AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
+
+    Generate();
     
     Render* render = CreateRender(width, height);
 
