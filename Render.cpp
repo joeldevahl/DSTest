@@ -489,8 +489,8 @@ void Initialize(Render* render, HWND hwnd)
     {
         CD3DX12_CPU_DESCRIPTOR_HANDLE baseHandle(render->uniHeap->GetCPUDescriptorHandleForHeapStart());
 
-		CreateBuffer(render, render->visibleInstances, render->numInstances, sizeof(UINT), 10);
-		CreateBuffer(render, render->visibleClusters, render->numInstances, sizeof(UINT), 11);
+		CreateBuffer(render, render->visibleInstances, render->numInstances, sizeof(UINT), 10, true);
+		CreateBuffer(render, render->visibleClusters, render->numInstances, sizeof(UINT), 11, true);
     }
 
 
@@ -519,15 +519,13 @@ void Initialize(Render* render, HWND hwnd)
         {
             byte* data;
             uint32_t size;
-        } amplificationShader, meshShader, pixelShader;
+        } meshShader, pixelShader;
 
-        ReadDataFromFile(L"x64/Debug/MeshletAS.cso", &amplificationShader.data, &amplificationShader.size);
         ReadDataFromFile(L"x64/Debug/MeshletMS.cso", &meshShader.data, &meshShader.size);
         ReadDataFromFile(L"x64/Debug/MeshletPS.cso", &pixelShader.data, &pixelShader.size);
 
         D3DX12_MESH_SHADER_PIPELINE_STATE_DESC psoDesc = {};
         psoDesc.pRootSignature = render->drawRootSignature.get();
-        psoDesc.AS = { amplificationShader.data, amplificationShader.size };
         psoDesc.MS = { meshShader.data, meshShader.size };
         psoDesc.PS = { pixelShader.data, pixelShader.size };
         psoDesc.NumRenderTargets = 1;
@@ -547,7 +545,6 @@ void Initialize(Render* render, HWND hwnd)
 
         check_hresult(render->device->CreatePipelineState(&streamDesc, IID_PPV_ARGS(render->drawMeshPSO.put())));
 
-        free(amplificationShader.data);
         free(meshShader.data);
         free(pixelShader.data);
     }

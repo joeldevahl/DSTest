@@ -14,6 +14,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
 	Instance instance = GetInstance(instanceIndex);
 	Mesh mesh = GetMesh(instance.MeshIndex);
 
-	// TODO: materials and multiple clusters and what not
-	visibleClusters.Store(dtid.x * 4, mesh.ClusterStart); // TODO: pack instance as well
+	// TODO: multiple clusters and what not
+	uint val = (mesh.ClusterStart & 0x0000ffff) | (instanceIndex << 16);
+	visibleClusters.Store(dtid.x * 4, val);
 }
