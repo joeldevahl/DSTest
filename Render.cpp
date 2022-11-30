@@ -458,16 +458,19 @@ void Initialize(Render* render, HWND hwnd)
     com_ptr<IDStorageFile> clustersFile;
     com_ptr<IDStorageFile> verticesFile;
     com_ptr<IDStorageFile> indicesFile;
+    com_ptr<IDStorageFile> materialsFile;
     UINT32 instancesSize = 0;
     UINT32 meshesSize = 0;
     UINT32 clustersSize = 0;
     UINT32 verticesSize = 0;
     UINT32 indicesSize = 0;
+    UINT32 materialsSize = 0;
 	OpenFileForGPU(render, L"instances.raw", instancesFile, instancesSize);
 	OpenFileForGPU(render, L"meshes.raw", meshesFile, meshesSize);
 	OpenFileForGPU(render, L"clusters.raw", clustersFile, clustersSize);
 	OpenFileForGPU(render, L"vertices.raw", verticesFile, verticesSize);
 	OpenFileForGPU(render, L"indices.raw", indicesFile, indicesSize);
+	OpenFileForGPU(render, L"materials.raw", materialsFile, materialsSize);
     render->numInstances = instancesSize / sizeof(Instance);
 
     /*
@@ -478,9 +481,10 @@ void Initialize(Render* render, HWND hwnd)
 
 		CreateBuffer(render, render->instancesBuffer, instancesSize / sizeof(Instance), sizeof(Instance), 0);
 		CreateBuffer(render, render->meshesBuffer, meshesSize / sizeof(Mesh), sizeof(Mesh), 1);
-		CreateBuffer(render, render->clustersBuffer, 1024 * 1024, sizeof(Cluster), 2);
-		CreateBuffer(render, render->vertexDataBuffer, 128 * 1024, 3 * sizeof(float), 3, true);
-		CreateBuffer(render, render->indexDataBuffer, 128 * 1024, sizeof(UINT), 4, true);
+		CreateBuffer(render, render->clustersBuffer, clustersSize / sizeof(Cluster), sizeof(Cluster), 2);
+		CreateBuffer(render, render->vertexDataBuffer, verticesSize / (4 * sizeof(float)), 4 * sizeof(float), 3, true);
+		CreateBuffer(render, render->indexDataBuffer, indicesSize / sizeof(UINT), sizeof(UINT), 4, true);
+		CreateBuffer(render, render->materialsBuffer, materialsSize / sizeof(Material), sizeof(Material), 5);
     }
 
     /*
@@ -573,6 +577,7 @@ void Initialize(Render* render, HWND hwnd)
         LoadFileToGPU(render, clustersFile, render->clustersBuffer.get(), clustersSize);
         LoadFileToGPU(render, verticesFile, render->vertexDataBuffer.get(), verticesSize);
         LoadFileToGPU(render, indicesFile, render->indexDataBuffer.get(), indicesSize);
+        LoadFileToGPU(render, materialsFile, render->materialsBuffer.get(), materialsSize);
 
         // Issue a fence and wait for it
         {

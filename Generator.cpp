@@ -39,6 +39,12 @@ void Generate()
 	};
 	OutputDataToFile(L"meshes.raw", meshes, sizeof(meshes));
 
+	Material materials[1] =
+	{
+		{ {1.0f, 0.0f, 1.0f, 1.0f } },
+	};
+	OutputDataToFile(L"materials.raw", materials, sizeof(materials));
+
 	{
 		const int xCount = 230;
 		const int yCount = 130;
@@ -55,6 +61,7 @@ void Generate()
 				instances[i].Position[1] = scale * (y - yCount / 2.0f);
 				instances[i].Position[2] = -400.0f;
 				instances[i].MeshIndex = 0;
+				instances[i].MaterialIndex = 0;
 				++i;
 			}
 		}

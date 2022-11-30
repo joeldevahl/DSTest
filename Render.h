@@ -14,6 +14,7 @@ struct Instance
 {
     float Position[3];
     UINT MeshIndex;
+    UINT MaterialIndex;
 };
 
 struct Mesh
@@ -28,6 +29,10 @@ struct Cluster
     UINT IndexCount;
 };
 
+struct Material
+{
+    float Color[4];
+};
 
 Render* CreateRender(UINT width, UINT height);
 void Destroy(Render* render);

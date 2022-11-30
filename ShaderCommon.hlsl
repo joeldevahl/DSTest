@@ -2,6 +2,7 @@ struct Payload
 {
     float3 position;
 	uint mesh_index;
+	uint material_index;
 };
 
 struct Constants
@@ -19,6 +20,7 @@ struct Instance
 {
     float3 position;
     uint mesh_index;
+    uint material_index;
 };
 
 struct Mesh
@@ -35,7 +37,7 @@ struct Cluster
 
 struct Material
 {
-    uint texture_id;
+    float4 color;
 };
 
 ConstantBuffer<Constants> constants : register(b0);
@@ -45,6 +47,7 @@ StructuredBuffer<Mesh> GetMeshBuffer() { return ResourceDescriptorHeap[1]; }
 StructuredBuffer<Cluster> GetClusterBuffer() { return ResourceDescriptorHeap[2]; }
 ByteAddressBuffer GetVertexDataBuffer() { return ResourceDescriptorHeap[3]; }
 ByteAddressBuffer GetIndexDataBuffer() { return ResourceDescriptorHeap[4]; }
+StructuredBuffer<Material> GetMaterialBuffer() { return ResourceDescriptorHeap[5]; }
 
 Instance GetInstance(uint idx) { return GetInstanceBuffer()[idx]; }
 Mesh GetMesh(uint idx) { return GetMeshBuffer()[idx]; }
@@ -56,3 +59,4 @@ uint3 GetTri(uint idx)
     ByteAddressBuffer buffer = GetIndexDataBuffer();
     return buffer.Load3(idx * 12);
 }
+Material GetMaterial(uint idx) { return GetMaterialBuffer()[idx]; }

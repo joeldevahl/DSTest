@@ -2,7 +2,7 @@
 
 struct PrimitiveAttributes
 {
-    uint mesh_index : COLOR0;
+    uint material_index : COLOR0;
 };
 
 struct VertexAttributes
@@ -26,7 +26,7 @@ void main(
     if (gtid < 2)
     {
 		tris[gtid] = gtid == 0 ? GetTri(0) : GetTri(1);
-        prims[gtid].mesh_index = meshletPayload.mesh_index;
+        prims[gtid].material_index = meshletPayload.material_index;
     }
 
     if (gtid < 4)
