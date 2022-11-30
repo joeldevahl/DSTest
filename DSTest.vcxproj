@@ -180,6 +180,7 @@
       <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">/Tps_6_6 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">/Tps_6_6 %(AdditionalOptions)</AdditionalOptions>
     </FxCompile>
+    <ClInclude Include="Common.h" />
     <ClInclude Include="d3dx12.h" />
     <FxCompile Include="ShaderCommon.hlsl">
       <FileType>Document</FileType>

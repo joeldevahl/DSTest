@@ -5,34 +5,10 @@
 
 struct Render;
 
-struct Vertex
-{
-    float Position[4];
-};
-
-struct Instance
-{
-    float Position[3];
-    UINT MeshIndex;
-    UINT MaterialIndex;
-};
-
-struct Mesh
-{
-    UINT ClusterStart;
-    UINT ClusterCount;
-};
-
-struct Cluster
-{
-    UINT IndexStart;
-    UINT IndexCount;
-};
-
-struct Material
-{
-    float Color[4];
-};
+struct float3 { float x, y, z; };
+struct float4 { float x, y, z, w; };
+typedef UINT uint;
+#include "Common.h"
 
 Render* CreateRender(UINT width, UINT height);
 void Destroy(Render* render);

@@ -1,8 +1,8 @@
 struct Payload
 {
-    float3 position;
-	uint mesh_index;
-	uint material_index;
+    float3 Position;
+	uint MeshIndex;
+	uint MaterialIndex;
 };
 
 struct Constants
@@ -11,34 +11,7 @@ struct Constants
     uint4 counts;
 };
 
-struct Vertex
-{
-    float3 position;
-};
-
-struct Instance
-{
-    float3 position;
-    uint mesh_index;
-    uint material_index;
-};
-
-struct Mesh
-{
-    uint cluster_start;
-    uint cluster_count;
-};
-
-struct Cluster
-{
-    uint index_start;
-    uint index_count;
-};
-
-struct Material
-{
-    float4 color;
-};
+#include "Common.h"
 
 ConstantBuffer<Constants> constants : register(b0);
 

@@ -2,12 +2,12 @@
 
 struct PrimitiveAttributes
 {
-    uint material_index : COLOR0;
+    uint MaterialIndex : COLOR0;
 };
 
 struct VertexAttributes
 {
-    float4 pos : SV_Position;
+    float4 Position : SV_Position;
 };
 
 [NumThreads(128, 1, 1)]
@@ -26,15 +26,15 @@ void main(
     if (gtid < 2)
     {
 		tris[gtid] = gtid == 0 ? GetTri(0) : GetTri(1);
-        prims[gtid].material_index = meshletPayload.material_index;
+        prims[gtid].MaterialIndex = meshletPayload.MaterialIndex;
     }
 
     if (gtid < 4)
     {
         float4 vert = GetVertex(gtid);
 
-        vert.xyz += meshletPayload.position;
+        vert.xyz += meshletPayload.Position;
 
-        verts[gtid].pos = mul(vert, constants.mvp);
+        verts[gtid].Position = mul(vert, constants.mvp);
     }
 }

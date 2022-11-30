@@ -57,9 +57,9 @@ void Generate()
 			for (int x = 0; x < xCount; ++x)
 			{
 				float scale = 3.0f;
-				instances[i].Position[0] = scale * (x - xCount / 2.0f);
-				instances[i].Position[1] = scale * (y - yCount / 2.0f);
-				instances[i].Position[2] = -400.0f;
+				instances[i].Position.x = scale * (x - xCount / 2.0f);
+				instances[i].Position.y = scale * (y - yCount / 2.0f);
+				instances[i].Position.z = -400.0f;
 				instances[i].MeshIndex = 0;
 				instances[i].MaterialIndex = 0;
 				++i;
