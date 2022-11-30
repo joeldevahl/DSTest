@@ -13,10 +13,10 @@ void Generate()
 {
 	Vertex vertices[4] =
 	{
-		{ -1.0f,  1.0f, 0.0f, 1.0f },
-        {  1.0f,  1.0f, 0.0f, 1.0f },
-        { -1.0f, -1.0f, 0.0f, 1.0f },
-        {  1.0f, -1.0f, 0.0f, 1.0f },
+		float4(-1.0f,  1.0f, 0.0f, 1.0f ),
+        float4( 1.0f,  1.0f, 0.0f, 1.0f ),
+        float4(-1.0f, -1.0f, 0.0f, 1.0f),
+        float4( 1.0f, -1.0f, 0.0f, 1.0f),
 	};
 	OutputDataToFile(L"vertices.raw", vertices, sizeof(vertices));
 

@@ -5,12 +5,7 @@ struct Payload
 	uint MaterialIndex;
 };
 
-struct Constants
-{
-    float4x4 mvp;
-    uint4 counts;
-};
-
+#define CB_ALIGN
 #include "Common.h"
 
 ConstantBuffer<Constants> constants : register(b0);

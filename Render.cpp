@@ -4,9 +4,7 @@
 #include "d3dx12.h"
 #include <dstorage.h>
 #include <winrt/base.h>
-#include <directxmath.h> // for XMFLOAT4x4
 
-using namespace DirectX;
 using winrt::com_ptr;
 using winrt::check_hresult;
 
@@ -32,12 +30,6 @@ enum DepthStencilTargets
     MainDepthStencil = 0,
 
     DepthStencilTargetCount,
-};
-
-_declspec(align(256u)) struct SceneConstantBuffer
-{
-    XMFLOAT4X4 MVP;
-    UINT Counts[4];
 };
 
 struct Render
@@ -71,7 +63,7 @@ struct Render
     CD3DX12_CPU_DESCRIPTOR_HANDLE depthStencilDSV;
 
     UINT numInstances;
-    SceneConstantBuffer constantBufferData;
+    Constants constantBufferData;
     com_ptr<ID3D12Resource> constantBuffer;
     com_ptr<ID3D12Resource> instancesBuffer;
     com_ptr<ID3D12Resource> meshesBuffer;
@@ -437,7 +429,7 @@ void Initialize(Render* render, HWND hwnd)
      * Global Constant Buffer
      */
     {
-        const UINT64 constantBufferSize = sizeof(SceneConstantBuffer) * NUM_QUEUED_FRAMES;
+        const UINT64 constantBufferSize = sizeof(Constants) * NUM_QUEUED_FRAMES;
         CreateBufferResource(render, render->constantBuffer, constantBufferSize, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
 
         D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
@@ -635,11 +627,11 @@ void Draw(Render* render)
 
     XMMATRIX proj = XMMatrixPerspectiveFovRH(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
     XMStoreFloat4x4(&render->constantBufferData.MVP, XMMatrixTranspose(proj));
-    render->constantBufferData.Counts[0] = render->numInstances;
-    render->constantBufferData.Counts[1] = 0;
-    render->constantBufferData.Counts[2] = 0;
-    render->constantBufferData.Counts[3] = 0;
-    memcpy(render->cbvDataBegin + sizeof(SceneConstantBuffer) * render->frameIndex, &render->constantBufferData, sizeof(render->constantBufferData));
+    render->constantBufferData.Counts.x = render->numInstances;
+    render->constantBufferData.Counts.y = 0;
+    render->constantBufferData.Counts.z = 0;
+    render->constantBufferData.Counts.w = 0;
+    memcpy(render->cbvDataBegin + sizeof(Constants) * render->frameIndex, &render->constantBufferData, sizeof(render->constantBufferData));
 
     render->commandList->RSSetViewports(1, &render->viewport);
     render->commandList->RSSetScissorRects(1, &render->scissorRect);
@@ -665,8 +657,8 @@ void Draw(Render* render)
 */
     render->commandList->SetGraphicsRootSignature(render->drawRootSignature.get());
     render->commandList->SetPipelineState(render->drawMeshPSO.get());
-    render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer->GetGPUVirtualAddress() + sizeof(SceneConstantBuffer) * render->frameIndex);
-	render->commandList->DispatchMesh(render->constantBufferData.Counts[0], 1, 1);
+    render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
+	render->commandList->DispatchMesh(render->constantBufferData.Counts.x, 1, 1);
 
     auto presentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(render->backBuffers[render->frameIndex].get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     render->commandList->ResourceBarrier(1, &presentBarrier);

@@ -1,3 +1,9 @@
+CB_ALIGN struct Constants
+{
+    float4x4 MVP;
+    uint4 Counts;
+};
+
 struct Vertex
 {
     float4 Position;

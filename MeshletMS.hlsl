@@ -35,6 +35,6 @@ void main(
 
         vert.xyz += meshletPayload.Position;
 
-        verts[gtid].Position = mul(vert, constants.mvp);
+        verts[gtid].Position = mul(vert, constants.MVP);
     }
 }
