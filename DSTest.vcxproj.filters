@@ -41,7 +41,10 @@
     <FxCompile Include="ShaderCommon.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
-    <FxCompile Include="Culling.hlsl">
+    <FxCompile Include="InstanceCulling.hlsl">
+      <Filter>Resource Files</Filter>
+    </FxCompile>
+    <FxCompile Include="ClusterCulling.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
   </ItemGroup>

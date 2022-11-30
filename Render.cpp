@@ -73,10 +73,14 @@ struct Render
     com_ptr<ID3D12Resource> materialsBuffer;
     char* cbvDataBegin;
 
+    com_ptr<ID3D12Resource> visibleInstances;
+    com_ptr<ID3D12Resource> visibleClusters;
+
     com_ptr<ID3D12RootSignature> drawRootSignature;
     com_ptr<ID3D12PipelineState> drawMeshPSO;
 
-    com_ptr<ID3D12PipelineState> cullingComputePSO;
+    com_ptr<ID3D12PipelineState> instanceCullingPSO;
+    com_ptr<ID3D12PipelineState> clusterCullingPSO;
 
     com_ptr<ID3D12GraphicsCommandList6> commandList;
 
@@ -480,6 +484,18 @@ void Initialize(Render* render, HWND hwnd)
     }
 
     /*
+     * Intermediate buffers
+     */
+    {
+        CD3DX12_CPU_DESCRIPTOR_HANDLE baseHandle(render->uniHeap->GetCPUDescriptorHandleForHeapStart());
+
+		CreateBuffer(render, render->visibleInstances, render->numInstances, sizeof(UINT), 10);
+		CreateBuffer(render, render->visibleClusters, render->numInstances, sizeof(UINT), 11);
+    }
+
+
+
+    /*
      * Root Signature
      */
     {
@@ -537,24 +553,36 @@ void Initialize(Render* render, HWND hwnd)
     }
 
     /*
-     * Compute PSO
+     * Compute PSOs
      */
     {
         struct
         {
             byte* data;
             uint32_t size;
-        } cullingComputeShader;
+        } instanceCullingComputeShader, clusterCullingComputeShader;
 
-        ReadDataFromFile(L"x64/Debug/Culling.cso", &cullingComputeShader.data, &cullingComputeShader.size);
+        ReadDataFromFile(L"x64/Debug/InstanceCulling.cso", &instanceCullingComputeShader.data, &instanceCullingComputeShader.size);
+        ReadDataFromFile(L"x64/Debug/ClusterCulling.cso", &clusterCullingComputeShader.data, &clusterCullingComputeShader.size);
 
-        D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
-		desc.pRootSignature = render->drawRootSignature.get();
-        desc.CS = { cullingComputeShader.data, cullingComputeShader.size};
+        {
+			D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
+			desc.pRootSignature = render->drawRootSignature.get();
+			desc.CS = { instanceCullingComputeShader.data, instanceCullingComputeShader.size};
 
-        check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->cullingComputePSO.put())));
+			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->instanceCullingPSO.put())));
+        }
 
-        free(cullingComputeShader.data);
+        {
+			D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
+			desc.pRootSignature = render->drawRootSignature.get();
+			desc.CS = { clusterCullingComputeShader.data, clusterCullingComputeShader.size};
+
+			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->clusterCullingPSO.put())));
+        }
+
+        free(instanceCullingComputeShader.data);
+        free(clusterCullingComputeShader.data);
     }
 
     check_hresult(render->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, render->commandAllocators[render->frameIndex].get(), nullptr, IID_PPV_ARGS(render->commandList.put())));
@@ -649,12 +677,19 @@ void Draw(Render* render)
         render->uniHeap.get(),
     };
     render->commandList->SetDescriptorHeaps(1, heaps);
-/*
+
     render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
-    render->commandList->SetPipelineState(render->cullingComputePSO.get());
-    render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer->GetGPUVirtualAddress() + sizeof(SceneConstantBuffer) * render->frameIndex);
-    render->commandList->Dispatch(1, 1, 1);
-*/
+    render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
+
+    // Cull instances
+    render->commandList->SetPipelineState(render->instanceCullingPSO.get());
+    render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
+
+    // Cull clusters
+    render->commandList->SetPipelineState(render->clusterCullingPSO.get());
+    render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
+
+    // Do the draws
     render->commandList->SetGraphicsRootSignature(render->drawRootSignature.get());
     render->commandList->SetPipelineState(render->drawMeshPSO.get());
     render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
