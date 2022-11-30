@@ -2,8 +2,7 @@
 
 struct PrimitiveAttributes
 {
-    uint mesh_id : COLOR0;
-    uint material_id : COLOR1;
+    uint mesh_index : COLOR0;
 };
 
 struct VertexAttributes
@@ -27,15 +26,14 @@ void main(
     if (gtid < 2)
     {
 		tris[gtid] = gtid == 0 ? GetTri(0) : GetTri(1);
-        prims[gtid].mesh_id = meshletPayload.mesh_id;
-        prims[gtid].material_id = meshletPayload.material_id;
+        prims[gtid].mesh_index = meshletPayload.mesh_index;
     }
 
     if (gtid < 4)
     {
         float4 vert = GetVertex(gtid);
 
-        vert.xyz += meshletPayload.offset;
+        vert.xyz += meshletPayload.position;
 
         verts[gtid].pos = mul(vert, constants.mvp);
     }

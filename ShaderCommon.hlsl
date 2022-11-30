@@ -1,16 +1,13 @@
 struct Payload
 {
-    float3 offset;
-	uint mesh_id;
-	uint material_id;
+    float3 position;
+	uint mesh_index;
 };
 
 struct Constants
 {
     float4x4 mvp;
     uint4 counts;
-    uint num_meshes;
-    uint num_materials;
 };
 
 struct Vertex

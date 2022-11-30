@@ -39,9 +39,26 @@ void Generate()
 	};
 	OutputDataToFile(L"meshes.raw", meshes, sizeof(meshes));
 
-	Instance instances[1] =
 	{
-		{ {0.0f, 0.0f, 0.0f}, 0 },
-	};
-	OutputDataToFile(L"instances.raw", instances, sizeof(instances));
+		const int xCount = 230;
+		const int yCount = 130;
+		const int count = xCount * yCount;
+		Instance instances[count];
+
+		int i = 0;
+		for (int y = 0; y < yCount; ++y)
+		{
+			for (int x = 0; x < xCount; ++x)
+			{
+				float scale = 3.0f;
+				instances[i].Position[0] = scale * (x - xCount / 2.0f);
+				instances[i].Position[1] = scale * (y - yCount / 2.0f);
+				instances[i].Position[2] = -400.0f;
+				instances[i].MeshIndex = 0;
+				++i;
+			}
+		}
+
+		OutputDataToFile(L"instances.raw", instances, sizeof(instances));
+	}
 }

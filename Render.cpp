@@ -38,8 +38,6 @@ _declspec(align(256u)) struct SceneConstantBuffer
 {
     XMFLOAT4X4 MVP;
     UINT Counts[4];
-    UINT NumMeshes;
-    UINT NumMaterials;
 };
 
 struct Render
@@ -72,6 +70,7 @@ struct Render
     com_ptr<ID3D12Resource> depthStencil;
     CD3DX12_CPU_DESCRIPTOR_HANDLE depthStencilDSV;
 
+    UINT numInstances;
     SceneConstantBuffer constantBufferData;
     com_ptr<ID3D12Resource> constantBuffer;
     com_ptr<ID3D12Resource> instancesBuffer;
@@ -469,6 +468,7 @@ void Initialize(Render* render, HWND hwnd)
 	OpenFileForGPU(render, L"clusters.raw", clustersFile, clustersSize);
 	OpenFileForGPU(render, L"vertices.raw", verticesFile, verticesSize);
 	OpenFileForGPU(render, L"indices.raw", indicesFile, indicesSize);
+    render->numInstances = instancesSize / sizeof(Instance);
 
     /*
      * Mesh and Instance Pool
@@ -630,12 +630,10 @@ void Draw(Render* render)
 
     XMMATRIX proj = XMMatrixPerspectiveFovRH(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
     XMStoreFloat4x4(&render->constantBufferData.MVP, XMMatrixTranspose(proj));
-    render->constantBufferData.Counts[0] = 230;
-    render->constantBufferData.Counts[1] = 130;
+    render->constantBufferData.Counts[0] = render->numInstances;
+    render->constantBufferData.Counts[1] = 0;
     render->constantBufferData.Counts[2] = 0;
     render->constantBufferData.Counts[3] = 0;
-    render->constantBufferData.NumMeshes = 256;
-    render->constantBufferData.NumMaterials = 1024;
     memcpy(render->cbvDataBegin + sizeof(SceneConstantBuffer) * render->frameIndex, &render->constantBufferData, sizeof(render->constantBufferData));
 
     render->commandList->RSSetViewports(1, &render->viewport);
@@ -654,16 +652,16 @@ void Draw(Render* render)
         render->uniHeap.get(),
     };
     render->commandList->SetDescriptorHeaps(1, heaps);
-
+/*
     render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
     render->commandList->SetPipelineState(render->cullingComputePSO.get());
     render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer->GetGPUVirtualAddress() + sizeof(SceneConstantBuffer) * render->frameIndex);
     render->commandList->Dispatch(1, 1, 1);
-
+*/
     render->commandList->SetGraphicsRootSignature(render->drawRootSignature.get());
     render->commandList->SetPipelineState(render->drawMeshPSO.get());
     render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer->GetGPUVirtualAddress() + sizeof(SceneConstantBuffer) * render->frameIndex);
-	render->commandList->DispatchMesh(render->constantBufferData.Counts[0], render->constantBufferData.Counts[1], 1);
+	render->commandList->DispatchMesh(render->constantBufferData.Counts[0], 1, 1);
 
     auto presentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(render->backBuffers[render->frameIndex].get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     render->commandList->ResourceBarrier(1, &presentBarrier);
