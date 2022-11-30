@@ -82,14 +82,18 @@ struct Render
     com_ptr<ID3D12Resource> materialsBuffer;
     char* cbvDataBegin;
 
-    com_ptr<ID3D12RootSignature> rootSignature;
-    com_ptr<ID3D12PipelineState> pipelineState;
+    com_ptr<ID3D12RootSignature> drawRootSignature;
+    com_ptr<ID3D12PipelineState> drawMeshPSO;
+
+    com_ptr<ID3D12PipelineState> cullingComputePSO;
 
     com_ptr<ID3D12GraphicsCommandList6> commandList;
 
     com_ptr<ID3D12Fence1> fence;
     UINT fenceValues[NUM_QUEUED_FRAMES];
     HANDLE fenceEvent;
+
+    com_ptr<ID3D12CommandSignature> commandSignature;
 
     CD3DX12_VIEWPORT viewport;
     CD3DX12_RECT scissorRect;
@@ -470,11 +474,11 @@ void Initialize(Render* render, HWND hwnd)
         com_ptr<ID3DBlob> errorBlob;
         check_hresult(D3D12SerializeVersionedRootSignature(&desc, rootBlob.put(), errorBlob.put()));
 
-        check_hresult(render->device->CreateRootSignature(0, rootBlob->GetBufferPointer(), rootBlob->GetBufferSize(), IID_PPV_ARGS(render->rootSignature.put())));
+        check_hresult(render->device->CreateRootSignature(0, rootBlob->GetBufferPointer(), rootBlob->GetBufferSize(), IID_PPV_ARGS(render->drawRootSignature.put())));
     }
 
     /*
-     * PSO
+     * Graphics PSO
      */
     {
         struct
@@ -488,7 +492,7 @@ void Initialize(Render* render, HWND hwnd)
         ReadDataFromFile(L"x64/Debug/MeshletPS.cso", &pixelShader.data, &pixelShader.size);
 
         D3DX12_MESH_SHADER_PIPELINE_STATE_DESC psoDesc = {};
-        psoDesc.pRootSignature = render->rootSignature.get();
+        psoDesc.pRootSignature = render->drawRootSignature.get();
         psoDesc.AS = { amplificationShader.data, amplificationShader.size };
         psoDesc.MS = { meshShader.data, meshShader.size };
         psoDesc.PS = { pixelShader.data, pixelShader.size };
@@ -507,7 +511,26 @@ void Initialize(Render* render, HWND hwnd)
         streamDesc.pPipelineStateSubobjectStream = &psoStream;
         streamDesc.SizeInBytes = sizeof(psoStream);
 
-        check_hresult(render->device->CreatePipelineState(&streamDesc, IID_PPV_ARGS(render->pipelineState.put())));
+        check_hresult(render->device->CreatePipelineState(&streamDesc, IID_PPV_ARGS(render->drawMeshPSO.put())));
+    }
+
+    /*
+     * Compute PSO
+     */
+    {
+        struct
+        {
+            byte* data;
+            uint32_t size;
+        } cullingComputeShader;
+
+        ReadDataFromFile(L"x64/Debug/Culling.cso", &cullingComputeShader.data, &cullingComputeShader.size);
+
+        D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
+		desc.pRootSignature = render->drawRootSignature.get();
+        desc.CS = { cullingComputeShader.data, cullingComputeShader.size};
+
+        check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->cullingComputePSO.put())));
     }
 
     check_hresult(render->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, render->commandAllocators[render->frameIndex].get(), nullptr, IID_PPV_ARGS(render->commandList.put())));
@@ -557,6 +580,16 @@ void Initialize(Render* render, HWND hwnd)
         }
     }
 
+    {
+        D3D12_INDIRECT_ARGUMENT_DESC arg {};
+        arg.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH;
+        D3D12_COMMAND_SIGNATURE_DESC desc {};
+        desc.ByteStride = 3 * sizeof(UINT);
+        desc.NumArgumentDescs = 1;
+        desc.pArgumentDescs = &arg;
+        check_hresult(render->device->CreateCommandSignature(&desc, nullptr, IID_PPV_ARGS(render->commandSignature.put())));
+    }
+
     render->viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)render->width, (float)render->height);
     render->scissorRect = CD3DX12_RECT(0, 0, render->width, render->height);
 }
@@ -565,7 +598,7 @@ void Draw(Render* render)
 {
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
 
-    check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->pipelineState.get()));
+    check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
 
     XMMATRIX proj = XMMatrixPerspectiveFovRH(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
     XMStoreFloat4x4(&render->constantBufferData.MVP, XMMatrixTranspose(proj));
@@ -593,11 +626,15 @@ void Draw(Render* render)
         render->uniHeap.get(),
     };
     render->commandList->SetDescriptorHeaps(1, heaps);
-    render->commandList->SetGraphicsRootSignature(render->rootSignature.get());
-    render->commandList->SetPipelineState(render->pipelineState.get());
 
+    render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
+    render->commandList->SetPipelineState(render->cullingComputePSO.get());
+    render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer->GetGPUVirtualAddress() + sizeof(SceneConstantBuffer) * render->frameIndex);
+    render->commandList->Dispatch(1, 1, 1);
+
+    render->commandList->SetGraphicsRootSignature(render->drawRootSignature.get());
+    render->commandList->SetPipelineState(render->drawMeshPSO.get());
     render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer->GetGPUVirtualAddress() + sizeof(SceneConstantBuffer) * render->frameIndex);
-
 	render->commandList->DispatchMesh(render->constantBufferData.Counts[0], render->constantBufferData.Counts[1], 1);
 
     auto presentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(render->backBuffers[render->frameIndex].get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);

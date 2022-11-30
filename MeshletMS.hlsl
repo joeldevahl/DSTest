@@ -26,7 +26,7 @@ void main(
 
     if (gtid < 2)
     {
-		tris[gtid] = gtid == 0 ? uint3(0, 1, 2) : uint3(1, 3, 2);
+		tris[gtid] = gtid == 0 ? GetTri(0) : GetTri(1);
         prims[gtid].mesh_id = meshletPayload.mesh_id;
         prims[gtid].material_id = meshletPayload.material_id;
     }

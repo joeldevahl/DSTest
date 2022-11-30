@@ -54,3 +54,8 @@ Mesh GetMesh(uint idx) { return GetMeshBuffer()[idx]; }
 Cluster GetCluster(uint idx) { return GetClusterBuffer()[idx]; }
 float4 GetVertex(uint idx) { return asfloat(GetVertexDataBuffer().Load4(idx * 16)); }
 uint GetIndex(uint idx) { return GetIndexDataBuffer().Load(idx * 4); } // TODO: 8 bit indices
+uint3 GetTri(uint idx)
+{
+    ByteAddressBuffer buffer = GetIndexDataBuffer();
+    return buffer.Load3(idx * 12);
+}
