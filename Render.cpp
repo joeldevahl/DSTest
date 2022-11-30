@@ -90,7 +90,7 @@ struct Render
     com_ptr<ID3D12GraphicsCommandList6> commandList;
 
     com_ptr<ID3D12Fence1> fence;
-    UINT fenceValues[NUM_QUEUED_FRAMES];
+    UINT64 fenceValues[NUM_QUEUED_FRAMES];
     HANDLE fenceEvent;
 
     com_ptr<ID3D12CommandSignature> commandSignature;
@@ -211,9 +211,9 @@ static void CreateBufferSRV(Render* render, const com_ptr<ID3D12Resource> &resou
 	render->device->CreateShaderResourceView(resource.get(), &desc, handle);
 }
 
-static void CreateBuffer(Render* render, com_ptr<ID3D12Resource> &resource, UINT64 count, UINT64 stride, UINT descriptorOffset, bool isRaw = false)
+static void CreateBuffer(Render* render, com_ptr<ID3D12Resource> &resource, UINT count, UINT stride, UINT descriptorOffset, bool isRaw = false)
 {
-    UINT64 size = stride * count;
+    UINT size = stride * count;
 	CreateBufferResource(render, resource, size);
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), descriptorOffset, render->uniDescriptorSize);
@@ -222,25 +222,28 @@ static void CreateBuffer(Render* render, com_ptr<ID3D12Resource> &resource, UINT
 	CreateBufferSRV(render, resource, isRaw ? (size / 4) : count, isRaw ? 0 : stride, handle, format, flags);
 }
 
-static void LoadFileToGPU(Render* render, LPCWSTR fileName, ID3D12Resource* resource)
+static void OpenFileForGPU(Render* render, LPCWSTR fileName, com_ptr<IDStorageFile>& file, UINT32& size)
 {
-	IDStorageFile* file; // TODO: we deliberately do not release this file since it needs to stay open until the request finishes
-	check_hresult(render->storageFactory->OpenFile(fileName, IID_PPV_ARGS(&file)));
+	check_hresult(render->storageFactory->OpenFile(fileName, IID_PPV_ARGS(file.put())));
 
 	BY_HANDLE_FILE_INFORMATION info = {};
 	check_hresult(file->GetFileInformation(&info));
+    size = info.nFileSizeLow;
+}
 
+static void LoadFileToGPU(Render* render, const com_ptr<IDStorageFile>& file, ID3D12Resource* resource, UINT32 size)
+{
 	DSTORAGE_REQUEST request = {};
 	request.Options.SourceType = DSTORAGE_REQUEST_SOURCE_FILE;
 	request.Options.DestinationType = DSTORAGE_REQUEST_DESTINATION_BUFFER;
     request.Options.CompressionFormat = DSTORAGE_COMPRESSION_FORMAT_NONE;
-	request.Source.File.Source = file;
+	request.Source.File.Source = file.get();
 	request.Source.File.Offset = 0;
-	request.Source.File.Size = info.nFileSizeLow;
-	request.UncompressedSize = request.Source.File.Size;
+	request.Source.File.Size = size;
+	request.UncompressedSize = size;
 	request.Destination.Buffer.Resource = resource;
 	request.Destination.Buffer.Offset = 0;
-	request.Destination.Buffer.Size = request.Source.File.Size;
+	request.Destination.Buffer.Size = size;
 
 	render->storageQueue->EnqueueRequest(&request);
 }
@@ -449,13 +452,32 @@ void Initialize(Render* render, HWND hwnd)
     }
 
     /*
+     * Open files to query sizes
+     */
+    com_ptr<IDStorageFile> instancesFile;
+    com_ptr<IDStorageFile> meshesFile;
+    com_ptr<IDStorageFile> clustersFile;
+    com_ptr<IDStorageFile> verticesFile;
+    com_ptr<IDStorageFile> indicesFile;
+    UINT32 instancesSize = 0;
+    UINT32 meshesSize = 0;
+    UINT32 clustersSize = 0;
+    UINT32 verticesSize = 0;
+    UINT32 indicesSize = 0;
+	OpenFileForGPU(render, L"instances.raw", instancesFile, instancesSize);
+	OpenFileForGPU(render, L"meshes.raw", meshesFile, meshesSize);
+	OpenFileForGPU(render, L"clusters.raw", clustersFile, clustersSize);
+	OpenFileForGPU(render, L"vertices.raw", verticesFile, verticesSize);
+	OpenFileForGPU(render, L"indices.raw", indicesFile, indicesSize);
+
+    /*
      * Mesh and Instance Pool
      */
     {
         CD3DX12_CPU_DESCRIPTOR_HANDLE baseHandle(render->uniHeap->GetCPUDescriptorHandleForHeapStart());
 
-		CreateBuffer(render, render->instancesBuffer, 1024, sizeof(Instance), 0);
-		CreateBuffer(render, render->meshesBuffer, 1024, sizeof(Mesh), 1);
+		CreateBuffer(render, render->instancesBuffer, instancesSize / sizeof(Instance), sizeof(Instance), 0);
+		CreateBuffer(render, render->meshesBuffer, meshesSize / sizeof(Mesh), sizeof(Mesh), 1);
 		CreateBuffer(render, render->clustersBuffer, 1024 * 1024, sizeof(Cluster), 2);
 		CreateBuffer(render, render->vertexDataBuffer, 128 * 1024, 3 * sizeof(float), 3, true);
 		CreateBuffer(render, render->indexDataBuffer, 128 * 1024, sizeof(UINT), 4, true);
@@ -512,6 +534,10 @@ void Initialize(Render* render, HWND hwnd)
         streamDesc.SizeInBytes = sizeof(psoStream);
 
         check_hresult(render->device->CreatePipelineState(&streamDesc, IID_PPV_ARGS(render->drawMeshPSO.put())));
+
+        free(amplificationShader.data);
+        free(meshShader.data);
+        free(pixelShader.data);
     }
 
     /*
@@ -531,6 +557,8 @@ void Initialize(Render* render, HWND hwnd)
         desc.CS = { cullingComputeShader.data, cullingComputeShader.size};
 
         check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->cullingComputePSO.put())));
+
+        free(cullingComputeShader.data);
     }
 
     check_hresult(render->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, render->commandAllocators[render->frameIndex].get(), nullptr, IID_PPV_ARGS(render->commandList.put())));
@@ -540,11 +568,11 @@ void Initialize(Render* render, HWND hwnd)
      * Load data using DirectStorage
      */
     {
-        LoadFileToGPU(render, L"instances.raw", render->instancesBuffer.get());
-        LoadFileToGPU(render, L"meshes.raw", render->meshesBuffer.get());
-        LoadFileToGPU(render, L"clusters.raw", render->clustersBuffer.get());
-        LoadFileToGPU(render, L"vertices.raw", render->vertexDataBuffer.get());
-        LoadFileToGPU(render, L"indices.raw", render->indexDataBuffer.get());
+        LoadFileToGPU(render, instancesFile, render->instancesBuffer.get(), instancesSize);
+        LoadFileToGPU(render, meshesFile, render->meshesBuffer.get(), meshesSize);
+        LoadFileToGPU(render, clustersFile, render->clustersBuffer.get(), clustersSize);
+        LoadFileToGPU(render, verticesFile, render->vertexDataBuffer.get(), verticesSize);
+        LoadFileToGPU(render, indicesFile, render->indexDataBuffer.get(), indicesSize);
 
         // Issue a fence and wait for it
         {
