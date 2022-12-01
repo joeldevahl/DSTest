@@ -39,33 +39,37 @@ void Generate()
 	};
 	OutputDataToFile(L"meshes.raw", meshes, sizeof(meshes));
 
-	Material materials[1] =
-	{
-		{ {1.0f, 0.0f, 1.0f, 1.0f } },
-	};
-	OutputDataToFile(L"materials.raw", materials, sizeof(materials));
-
 	{
 		const int xCount = 230;
 		const int yCount = 130;
 		const int count = xCount * yCount;
-		Instance instances[count];
+		Material* materials = new Material[count];
+		Instance* instances = new Instance[count];
 
 		int i = 0;
 		for (int y = 0; y < yCount; ++y)
 		{
 			for (int x = 0; x < xCount; ++x)
 			{
+				materials[i].Color.x = (float)x / (float)xCount;
+				materials[i].Color.y = (float)y / (float)yCount;
+				materials[i].Color.z = 0.0f;
+				materials[i].Color.w = 1.0f;
+
 				float scale = 3.0f;
 				instances[i].Position.x = scale * (x - xCount / 2.0f);
 				instances[i].Position.y = scale * (y - yCount / 2.0f);
 				instances[i].Position.z = -400.0f;
 				instances[i].MeshIndex = 0;
-				instances[i].MaterialIndex = 0;
+				instances[i].MaterialIndex = i;
 				++i;
 			}
 		}
 
-		OutputDataToFile(L"instances.raw", instances, sizeof(instances));
+		OutputDataToFile(L"materials.raw", materials, count * sizeof(Material));
+		OutputDataToFile(L"instances.raw", instances, count * sizeof(Instance));
+
+		delete[] materials;
+		delete[] instances;
 	}
 }
