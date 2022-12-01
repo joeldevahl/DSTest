@@ -29,10 +29,10 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="MeshletMS.hlsl">
+    <FxCompile Include="VBufferMS.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
-    <FxCompile Include="MeshletPS.hlsl">
+    <FxCompile Include="VBufferPS.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
     <FxCompile Include="ShaderCommon.hlsl">
@@ -42,6 +42,9 @@
       <Filter>Resource Files</Filter>
     </FxCompile>
     <FxCompile Include="ClusterCulling.hlsl">
+      <Filter>Resource Files</Filter>
+    </FxCompile>
+    <FxCompile Include="Material.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
   </ItemGroup>

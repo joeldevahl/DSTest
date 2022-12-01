@@ -29,7 +29,7 @@ void Generate()
 
 	Cluster clusters[1] =
 	{
-		{0, 6},
+		{0, 6, 0, 4},
 	};
 	OutputDataToFile(L"clusters.raw", clusters, sizeof(clusters));
 

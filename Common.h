@@ -26,6 +26,8 @@ struct Cluster
 {
     uint IndexStart;
     uint IndexCount;
+    uint VertexStart;
+    uint VertexCount;
 };
 
 struct Material

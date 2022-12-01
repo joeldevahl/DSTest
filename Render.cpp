@@ -59,6 +59,8 @@ struct Render
     com_ptr<ID3D12Resource> vBuffer;
     CD3DX12_CPU_DESCRIPTOR_HANDLE vBufferRTV;
 
+    com_ptr<ID3D12Resource> colorBuffer;
+
     com_ptr<ID3D12Resource> depthStencil;
     CD3DX12_CPU_DESCRIPTOR_HANDLE depthStencilDSV;
 
@@ -81,6 +83,7 @@ struct Render
 
     com_ptr<ID3D12PipelineState> instanceCullingPSO;
     com_ptr<ID3D12PipelineState> clusterCullingPSO;
+    com_ptr<ID3D12PipelineState> materialPSO;
 
     com_ptr<ID3D12GraphicsCommandList6> commandList;
 
@@ -374,25 +377,59 @@ void Initialize(Render* render, HWND hwnd)
             CD3DX12_HEAP_PROPERTIES heapType(D3D12_HEAP_TYPE_DEFAULT);
 
 			D3D12_CLEAR_VALUE vBufferOptimizedClearValue = {};
-			vBufferOptimizedClearValue.Format = DXGI_FORMAT_R32G32_UINT;
+			vBufferOptimizedClearValue.Format = DXGI_FORMAT_R32_UINT;
             vBufferOptimizedClearValue.Color[0] = 0.0f;
             vBufferOptimizedClearValue.Color[1] = 0.0f;
             vBufferOptimizedClearValue.Color[2] = 0.0f;
             vBufferOptimizedClearValue.Color[3] = 0.0f;
 
-            auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32_UINT, render->width, render->height, 1, 0, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+            auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32_UINT, render->width, render->height, 1, 0, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
 
 			check_hresult(render->device->CreateCommittedResource(
 				&heapType,
 				D3D12_HEAP_FLAG_NONE,
 				&desc,
-				D3D12_RESOURCE_STATE_RENDER_TARGET,
+				D3D12_RESOURCE_STATE_GENERIC_READ,
 				&vBufferOptimizedClearValue,
 				IID_PPV_ARGS(render->vBuffer.put())
 			));
 
             render->vBufferRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvBaseHandle, RenderTargets::VBuffer, render->rtvDescriptorSize);
             render->device->CreateRenderTargetView(render->vBuffer.get(), nullptr, render->vBufferRTV);
+
+
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Format = DXGI_FORMAT_R32_UINT;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srvDesc.Texture2D.MipLevels = 1;
+            srvDesc.Texture2D.MostDetailedMip = 0;
+            srvDesc.Texture2D.PlaneSlice = 0;
+            srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+            render->device->CreateShaderResourceView(render->vBuffer.get(), &srvDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), 12, render->uniDescriptorSize));
+        }
+
+        // Color buffer
+        {
+            CD3DX12_HEAP_PROPERTIES heapType(D3D12_HEAP_TYPE_DEFAULT);
+
+            auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8G8B8A8_UNORM, render->width, render->height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+			check_hresult(render->device->CreateCommittedResource(
+				&heapType,
+				D3D12_HEAP_FLAG_NONE,
+				&desc,
+				D3D12_RESOURCE_STATE_COPY_SOURCE,
+				nullptr,
+				IID_PPV_ARGS(render->colorBuffer.put())
+			));
+
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+            uavDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+            uavDesc.Texture2D.PlaneSlice = 0;
+            uavDesc.Texture2D.MipSlice = 0;
+            render->device->CreateUnorderedAccessView(render->colorBuffer.get(), nullptr, &uavDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), 13, render->uniDescriptorSize));
         }
     }
 
@@ -512,7 +549,7 @@ void Initialize(Render* render, HWND hwnd)
     }
 
     /*
-     * Graphics PSO
+     * VBuffer PSO
      */
     {
         struct
@@ -521,15 +558,15 @@ void Initialize(Render* render, HWND hwnd)
             uint32_t size;
         } meshShader, pixelShader;
 
-        ReadDataFromFile(L"x64/Debug/MeshletMS.cso", &meshShader.data, &meshShader.size);
-        ReadDataFromFile(L"x64/Debug/MeshletPS.cso", &pixelShader.data, &pixelShader.size);
+        ReadDataFromFile(L"x64/Debug/VBufferMS.cso", &meshShader.data, &meshShader.size);
+        ReadDataFromFile(L"x64/Debug/VBufferPS.cso", &pixelShader.data, &pixelShader.size);
 
         D3DX12_MESH_SHADER_PIPELINE_STATE_DESC psoDesc = {};
         psoDesc.pRootSignature = render->drawRootSignature.get();
         psoDesc.MS = { meshShader.data, meshShader.size };
         psoDesc.PS = { pixelShader.data, pixelShader.size };
         psoDesc.NumRenderTargets = 1;
-        psoDesc.RTVFormats[0] = render->backBuffers[0]->GetDesc().Format;
+        psoDesc.RTVFormats[0] = render->vBuffer->GetDesc().Format;
         psoDesc.DSVFormat = render->depthStencil->GetDesc().Format;
         psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
         psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
@@ -557,10 +594,11 @@ void Initialize(Render* render, HWND hwnd)
         {
             byte* data;
             uint32_t size;
-        } instanceCullingComputeShader, clusterCullingComputeShader;
+        } instanceCullingComputeShader, clusterCullingComputeShader, materialComputeShader;
 
         ReadDataFromFile(L"x64/Debug/InstanceCulling.cso", &instanceCullingComputeShader.data, &instanceCullingComputeShader.size);
         ReadDataFromFile(L"x64/Debug/ClusterCulling.cso", &clusterCullingComputeShader.data, &clusterCullingComputeShader.size);
+        ReadDataFromFile(L"x64/Debug/Material.cso", &materialComputeShader.data, &materialComputeShader.size);
 
         {
 			D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
@@ -578,8 +616,17 @@ void Initialize(Render* render, HWND hwnd)
 			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->clusterCullingPSO.put())));
         }
 
+        {
+			D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
+			desc.pRootSignature = render->drawRootSignature.get();
+			desc.CS = { materialComputeShader.data, materialComputeShader.size};
+
+			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->materialPSO.put())));
+        }
+
         free(instanceCullingComputeShader.data);
         free(clusterCullingComputeShader.data);
+        free(materialComputeShader.data);
     }
 
     check_hresult(render->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, render->commandAllocators[render->frameIndex].get(), nullptr, IID_PPV_ARGS(render->commandList.put())));
@@ -647,7 +694,6 @@ void Initialize(Render* render, HWND hwnd)
 void Draw(Render* render)
 {
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
-
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
 
     XMMATRIX proj = XMMatrixPerspectiveFovRH(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
@@ -661,13 +707,11 @@ void Draw(Render* render)
     render->commandList->RSSetViewports(1, &render->viewport);
     render->commandList->RSSetScissorRects(1, &render->scissorRect);
 
-    CD3DX12_RESOURCE_BARRIER rtBarrier = CD3DX12_RESOURCE_BARRIER::Transition(render->backBuffers[render->frameIndex].get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    render->commandList->ResourceBarrier(1, &rtBarrier);
+    {
+        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        render->commandList->ResourceBarrier(1, &barrier);
+    }
 
-    render->commandList->OMSetRenderTargets(1, &render->backBufferRTVs[render->frameIndex], FALSE, &render->depthStencilDSV);
-
-    const float clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
-    render->commandList->ClearRenderTargetView(render->backBufferRTVs[render->frameIndex], clearColor, 0, nullptr);
     render->commandList->ClearDepthStencilView(render->depthStencilDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
     ID3D12DescriptorHeap* heaps[] = {
@@ -682,18 +726,49 @@ void Draw(Render* render)
     render->commandList->SetPipelineState(render->instanceCullingPSO.get());
     render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
 
+    // TODO: barrier for visible instances
+
     // Cull clusters
     render->commandList->SetPipelineState(render->clusterCullingPSO.get());
     render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
 
+    // TODO: barrier for visible clusters
+
     // Do the draws
+    render->commandList->OMSetRenderTargets(1, &render->vBufferRTV, FALSE, &render->depthStencilDSV);
     render->commandList->SetGraphicsRootSignature(render->drawRootSignature.get());
     render->commandList->SetPipelineState(render->drawMeshPSO.get());
     render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
 	render->commandList->DispatchMesh(render->constantBufferData.Counts.x, 1, 1);
 
-    auto presentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(render->backBuffers[render->frameIndex].get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-    render->commandList->ResourceBarrier(1, &presentBarrier);
+
+    {
+        D3D12_RESOURCE_BARRIER barriers[] = {
+            CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ),
+            CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+        };
+        render->commandList->ResourceBarrier(2, barriers);
+    }
+
+    // VBuffer to color buffer
+    render->commandList->SetPipelineState(render->materialPSO.get());
+    render->commandList->Dispatch((render->width + 7) / 8, (render->height + 7) / 8, 1);
+
+    {
+        D3D12_RESOURCE_BARRIER barriers[] = {
+            CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE),
+            CD3DX12_RESOURCE_BARRIER::Transition(render->backBuffers[render->frameIndex].get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST),
+        };
+        render->commandList->ResourceBarrier(2, barriers);
+    }
+
+    // color buffer to back buffer
+    render->commandList->CopyResource(render->backBuffers[render->frameIndex].get(), render->colorBuffer.get());
+
+    {
+        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(render->backBuffers[render->frameIndex].get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+        render->commandList->ResourceBarrier(1, &barrier);
+    }
 
     check_hresult(render->commandList->Close());
 

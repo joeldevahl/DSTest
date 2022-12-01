@@ -2,7 +2,7 @@
 
 struct PrimitiveAttributes
 {
-    uint MaterialIndex : COLOR0;
+    uint PackedOutput : COLOR0;
 };
 
 struct VertexAttributes
@@ -15,13 +15,11 @@ struct VertexAttributes
 void main(
     uint gtid : SV_GroupThreadID,
     uint gid : SV_GroupID,
-    out indices uint3 tris[2],
-    out primitives PrimitiveAttributes prims[2],
-    out vertices VertexAttributes verts[4]
+    out indices uint3 tri[43],
+    out primitives PrimitiveAttributes prims[43],
+    out vertices VertexAttributes verts[128]
 )
 {
-    SetMeshOutputCounts(4, 2);
-
 	ByteAddressBuffer visibleInstances = ResourceDescriptorHeap[10];
 	ByteAddressBuffer visibleClusters = ResourceDescriptorHeap[11];
     uint packedClusterInstance = visibleClusters.Load(gid * 4);
@@ -32,15 +30,18 @@ void main(
     Cluster cluster = GetCluster(clusterIndex);
     Instance instance = GetInstance(instanceIndex);
 
-    if (gtid < 2)
+    uint primitiveCount = cluster.IndexCount / 3; // TODO: precalc?
+    SetMeshOutputCounts(cluster.VertexCount, primitiveCount);
+
+    if (gtid < primitiveCount)
     {
-		tris[gtid] = gtid == 0 ? GetTri(cluster.IndexStart + 0) : GetTri(cluster.IndexStart + 1);
-        prims[gtid].MaterialIndex = instance.MaterialIndex;
+        tri[gtid] = GetTri(cluster.IndexStart + gtid * 4);
+        prims[gtid].PackedOutput = (gid << 8) | (gtid & 0x000000FF);
     }
 
-    if (gtid < 4)
+    if (gtid < cluster.VertexCount)
     {
-        float4 vert = GetVertex(gtid);
+        float4 vert = GetVertex(cluster.VertexStart + gtid);
 
         vert.xyz += instance.Position;
 
