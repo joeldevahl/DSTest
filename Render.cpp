@@ -272,11 +272,18 @@ void Initialize(Render* render, HWND hwnd)
 #if defined(_DEBUG)
     {
         com_ptr<ID3D12Debug> debugController;
-        HRESULT hr = D3D12GetDebugInterface(IID_PPV_ARGS(&debugController));
+        HRESULT hr = D3D12GetDebugInterface(IID_PPV_ARGS(debugController.put()));
         if (SUCCEEDED(hr))
         {
             debugController->EnableDebugLayer();
             dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
+
+            com_ptr<ID3D12Debug1> debugController1;
+            hr = debugController->QueryInterface(IID_PPV_ARGS(debugController1.put()));
+            if (SUCCEEDED(hr))
+            {
+                debugController1->SetEnableGPUBasedValidation(true);
+            }
         }
     }
 #endif
