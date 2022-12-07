@@ -182,10 +182,10 @@ static com_ptr<ID3D12DescriptorHeap> CreateDescriptorHeap(Render* render, D3D12_
     return heap;
 }
 
-static void CreateBufferResource(Render* render, com_ptr<ID3D12Resource> &resource, UINT64 size, D3D12_HEAP_TYPE heapType = D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON)
+static void CreateBufferResource(Render* render, com_ptr<ID3D12Resource> &resource, UINT64 size, D3D12_HEAP_TYPE heapType = D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE)
 {
 	auto heapProps = CD3DX12_HEAP_PROPERTIES(heapType);
-	auto resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(size);
+	auto resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(size, flags);
 	check_hresult(render->device->CreateCommittedResource(
 		&heapProps,
 		D3D12_HEAP_FLAG_NONE,
@@ -209,15 +209,15 @@ static void CreateBufferSRV(Render* render, const com_ptr<ID3D12Resource> &resou
 	render->device->CreateShaderResourceView(resource.get(), &desc, handle);
 }
 
-static void CreateBuffer(Render* render, com_ptr<ID3D12Resource> &resource, UINT count, UINT stride, UINT descriptorOffset, bool isRaw = false)
+static void CreateBuffer(Render* render, com_ptr<ID3D12Resource> &resource, UINT count, UINT stride, UINT descriptorOffset, bool isRaw = false, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE)
 {
     UINT size = stride * count;
-	CreateBufferResource(render, resource, size);
+	CreateBufferResource(render, resource, size, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON, flags);
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), descriptorOffset, render->uniDescriptorSize);
     DXGI_FORMAT format = isRaw ? DXGI_FORMAT_R32_TYPELESS : DXGI_FORMAT_UNKNOWN;
-    D3D12_BUFFER_SRV_FLAGS flags = isRaw ? D3D12_BUFFER_SRV_FLAG_RAW : D3D12_BUFFER_SRV_FLAG_NONE;
-	CreateBufferSRV(render, resource, isRaw ? (size / 4) : count, isRaw ? 0 : stride, handle, format, flags);
+    D3D12_BUFFER_SRV_FLAGS srvFlags = isRaw ? D3D12_BUFFER_SRV_FLAG_RAW : D3D12_BUFFER_SRV_FLAG_NONE;
+	CreateBufferSRV(render, resource, isRaw ? (size / 4) : count, isRaw ? 0 : stride, handle, format, srvFlags);
 }
 
 static void OpenFileForGPU(Render* render, LPCWSTR fileName, com_ptr<IDStorageFile>& file, UINT32& size)
@@ -533,8 +533,8 @@ void Initialize(Render* render, HWND hwnd)
     {
         CD3DX12_CPU_DESCRIPTOR_HANDLE baseHandle(render->uniHeap->GetCPUDescriptorHandleForHeapStart());
 
-		CreateBuffer(render, render->visibleInstances, render->numInstances, sizeof(UINT), 10, true);
-		CreateBuffer(render, render->visibleClusters, render->numInstances, sizeof(UINT), 11, true);
+		CreateBuffer(render, render->visibleInstances, render->numInstances, sizeof(UINT), 10, true, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+		CreateBuffer(render, render->visibleClusters, render->numInstances, sizeof(UINT), 11, true, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     }
 
 
@@ -733,13 +733,19 @@ void Draw(Render* render)
     render->commandList->SetPipelineState(render->instanceCullingPSO.get());
     render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
 
-    // TODO: barrier for visible instances
+    {
+        auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstances.get());
+        render->commandList->ResourceBarrier(1, &barrier);
+    }
 
     // Cull clusters
     render->commandList->SetPipelineState(render->clusterCullingPSO.get());
     render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
 
-    // TODO: barrier for visible clusters
+    {
+        auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters .get());
+        render->commandList->ResourceBarrier(1, &barrier);
+    }
 
     // Do the draws
     render->commandList->OMSetRenderTargets(1, &render->vBufferRTV, FALSE, &render->depthStencilDSV);
