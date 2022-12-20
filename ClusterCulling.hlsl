@@ -6,8 +6,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
 	if (dtid.x >= constants.Counts.x)
 		return;
 
-	ByteAddressBuffer visibleInstances = ResourceDescriptorHeap[10];
-	RWByteAddressBuffer visibleClusters = ResourceDescriptorHeap[11];
+	ByteAddressBuffer visibleInstances = ResourceDescriptorHeap[VISIBLE_INSTANCES_SRV];
+	RWByteAddressBuffer visibleClusters = ResourceDescriptorHeap[VISIBLE_CLUSTERS_UAV];
 
 	uint instanceIndex = visibleInstances.Load(dtid.x * 4);
 

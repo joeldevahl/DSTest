@@ -20,8 +20,8 @@ void main(
     out vertices VertexAttributes verts[128]
 )
 {
-	ByteAddressBuffer visibleInstances = ResourceDescriptorHeap[10];
-	ByteAddressBuffer visibleClusters = ResourceDescriptorHeap[11];
+	ByteAddressBuffer visibleInstances = ResourceDescriptorHeap[VISIBLE_INSTANCES_SRV];
+	ByteAddressBuffer visibleClusters = ResourceDescriptorHeap[VISIBLE_CLUSTERS_SRV];
     uint packedClusterInstance = visibleClusters.Load(gid * 4);
     uint clusterIndex = packedClusterInstance & 0x0000ffff;
     uint visibleInstanceIndex = packedClusterInstance >> 16;

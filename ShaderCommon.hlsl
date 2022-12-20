@@ -10,12 +10,12 @@ struct Payload
 
 ConstantBuffer<Constants> constants : register(b0);
 
-StructuredBuffer<Instance> GetInstanceBuffer() { return ResourceDescriptorHeap[0]; }
-StructuredBuffer<Mesh> GetMeshBuffer() { return ResourceDescriptorHeap[1]; }
-StructuredBuffer<Cluster> GetClusterBuffer() { return ResourceDescriptorHeap[2]; }
-ByteAddressBuffer GetVertexDataBuffer() { return ResourceDescriptorHeap[3]; }
-ByteAddressBuffer GetIndexDataBuffer() { return ResourceDescriptorHeap[4]; }
-StructuredBuffer<Material> GetMaterialBuffer() { return ResourceDescriptorHeap[5]; }
+StructuredBuffer<Instance> GetInstanceBuffer() { return ResourceDescriptorHeap[INSTANCE_BUFFER_SRV]; }
+StructuredBuffer<Mesh> GetMeshBuffer() { return ResourceDescriptorHeap[MESH_BUFFER_SRV]; }
+StructuredBuffer<Cluster> GetClusterBuffer() { return ResourceDescriptorHeap[CLUSTER_BUFFER_SRV]; }
+ByteAddressBuffer GetVertexDataBuffer() { return ResourceDescriptorHeap[VERTEX_DATA_BUFFER_SRV]; }
+ByteAddressBuffer GetIndexDataBuffer() { return ResourceDescriptorHeap[INDEX_DATA_BUFFER_SRV]; }
+StructuredBuffer<Material> GetMaterialBuffer() { return ResourceDescriptorHeap[MATERIAL_BUFFER_SRV]; }
 
 Instance GetInstance(uint idx) { return GetInstanceBuffer()[idx]; }
 Mesh GetMesh(uint idx) { return GetMeshBuffer()[idx]; }
