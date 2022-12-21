@@ -51,6 +51,7 @@ struct BufferDesc
     //UINT cbvDescriptorOffset;
     D3D12_HEAP_TYPE heapType = D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_STATES resrourceStates = D3D12_RESOURCE_STATE_COMMON;
+    LPCWSTR name = nullptr;
 
     BufferDesc(UINT _count, UINT _stride) : count(_count), stride(_stride) {}
     BufferDesc& WithSRV(UINT offset) { srvDescriptorOffset = offset; flags |= BUFFER_FLAG_SRV; return *this; }
@@ -58,6 +59,7 @@ struct BufferDesc
     BufferDesc& WithRAW() { flags |= BUFFER_FLAG_RAW; return *this; }
     BufferDesc& WithHeapType(D3D12_HEAP_TYPE _heapType) { heapType = _heapType; return *this; }
     BufferDesc& WithResourceState(D3D12_RESOURCE_STATES _resrourceStates) { resrourceStates = _resrourceStates; return *this; }
+    BufferDesc& WithName(LPCWSTR str) { name = str; return *this; }
 };
 
 struct Buffer
@@ -98,6 +100,7 @@ struct Render
     CD3DX12_CPU_DESCRIPTOR_HANDLE depthStencilDSV;
 
     UINT numInstances;
+    UINT maxNumClusters;
     Constants constantBufferData;
     Buffer constantBuffer;
     Buffer instancesBuffer;
@@ -110,6 +113,7 @@ struct Render
 
     Buffer visibleInstances;
     Buffer visibleClusters;
+    Buffer visibleClustersCounter;
 
     com_ptr<ID3D12RootSignature> drawRootSignature;
     com_ptr<ID3D12PipelineState> drawMeshPSO;
@@ -234,6 +238,7 @@ static void CreateBuffer(Render* render, Buffer* out_buffer, const BufferDesc& d
 		D3D12_RESOURCE_STATE_COMMON,
 		nullptr,
 		IID_PPV_ARGS(out_buffer->resource.put())));
+    out_buffer->resource->SetName(desc.name);
 
 
     if (desc.flags & BUFFER_FLAG_SRV)
@@ -551,7 +556,11 @@ void Initialize(Render* render, HWND hwnd)
      */
     {
         const UINT64 constantBufferSize = sizeof(Constants) * NUM_QUEUED_FRAMES;
-        CreateBuffer(render, &render->constantBuffer, BufferDesc(NUM_QUEUED_FRAMES, sizeof(Constants)).WithHeapType(D3D12_HEAP_TYPE_UPLOAD).WithResourceState(D3D12_RESOURCE_STATE_GENERIC_READ));
+        CreateBuffer(render, &render->constantBuffer,
+            BufferDesc(NUM_QUEUED_FRAMES, sizeof(Constants))
+            .WithName(L"ConstantBuffer")
+            .WithHeapType(D3D12_HEAP_TYPE_UPLOAD)
+            .WithResourceState(D3D12_RESOURCE_STATE_GENERIC_READ));
 
         CD3DX12_RANGE readRange(0, 0);
         check_hresult(render->constantBuffer.resource->Map(0, &readRange, reinterpret_cast<void**>(&render->cbvDataBegin)));
@@ -579,29 +588,36 @@ void Initialize(Render* render, HWND hwnd)
 	OpenFileForGPU(render, L"indices.raw", indicesFile, indicesSize);
 	OpenFileForGPU(render, L"materials.raw", materialsFile, materialsSize);
     render->numInstances = instancesSize / sizeof(Instance);
+    render->maxNumClusters = render->numInstances * 128;
 
     /*
      * Mesh and Instance Pool
      */
 	CreateBuffer(render, &render->instancesBuffer,
         BufferDesc(instancesSize / sizeof(Instance), sizeof(Instance))
+        .WithName(L"InstancesBuffer")
         .WithSRV(INSTANCE_BUFFER_SRV));
 	CreateBuffer(render, &render->meshesBuffer,
         BufferDesc(meshesSize / sizeof(Mesh), sizeof(Mesh))
+        .WithName(L"MeshesBuffer")
         .WithSRV(MESH_BUFFER_SRV));
 	CreateBuffer(render, &render->clustersBuffer,
         BufferDesc(clustersSize / sizeof(Cluster), sizeof(Cluster))
+        .WithName(L"ClustersBuffer")
         .WithSRV(CLUSTER_BUFFER_SRV));
 	CreateBuffer(render, &render->vertexDataBuffer,
         BufferDesc(verticesSize / (4 * sizeof(float)), 4 * sizeof(float))
+        .WithName(L"VertexDataBuffer")
         .WithSRV(VERTEX_DATA_BUFFER_SRV)
         .WithRAW());
 	CreateBuffer(render, &render->indexDataBuffer,
         BufferDesc(indicesSize / sizeof(UINT), sizeof(UINT))
+        .WithName(L"IndexDataBuffer")
         .WithSRV(INDEX_DATA_BUFFER_SRV)
         .WithRAW());
 	CreateBuffer(render, &render->materialsBuffer,
         BufferDesc(materialsSize / sizeof(Material), sizeof(Material))
+        .WithName(L"MaterialsBuffer")
         .WithSRV(MATERIAL_BUFFER_SRV));
 
     /*
@@ -609,13 +625,20 @@ void Initialize(Render* render, HWND hwnd)
      */
 	CreateBuffer(render, &render->visibleInstances,
         BufferDesc(render->numInstances, sizeof(UINT))
+        .WithName(L"VisibleInstancesBuffer")
         .WithSRV(VISIBLE_INSTANCES_SRV)
         .WithUAV(VISIBLE_INSTANCES_UAV)
         .WithRAW());
-	CreateBuffer(render, &render->visibleClusters,
-        BufferDesc(render->numInstances, sizeof(UINT))
+    CreateBuffer(render, &render->visibleClusters,
+        BufferDesc(render->maxNumClusters, sizeof(UINT))
+        .WithName(L"VisibleClustersBuffer")
         .WithSRV(VISIBLE_CLUSTERS_SRV)
         .WithUAV(VISIBLE_CLUSTERS_UAV)
+        .WithRAW());
+    CreateBuffer(render, &render->visibleClustersCounter,
+        BufferDesc(1, sizeof(UINT))
+        .WithName(L"VisibleClustersCounter")
+        .WithUAV(VISIBLE_CLUSTERS_COUNTER_UAV)
         .WithRAW());
 
     /*
@@ -785,7 +808,7 @@ void Draw(Render* render)
     XMMATRIX proj = XMMatrixPerspectiveFovRH(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
     XMStoreFloat4x4(&render->constantBufferData.MVP, XMMatrixTranspose(proj));
     render->constantBufferData.Counts.x = render->numInstances;
-    render->constantBufferData.Counts.y = 0;
+    render->constantBufferData.Counts.y = render->maxNumClusters;
     render->constantBufferData.Counts.z = 0;
     render->constantBufferData.Counts.w = 0;
     memcpy(render->cbvDataBegin + sizeof(Constants) * render->frameIndex, &render->constantBufferData, sizeof(render->constantBufferData));
@@ -813,8 +836,11 @@ void Draw(Render* render)
     render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
 
     {
-        auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstances.resource.get());
-        render->commandList->ResourceBarrier(1, &barrier);
+        D3D12_RESOURCE_BARRIER barriers[] = {
+            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstances.resource.get()),
+            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
+        };
+        render->commandList->ResourceBarrier(2, barriers);
     }
 
     // Cull clusters
@@ -822,8 +848,11 @@ void Draw(Render* render)
     render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
 
     {
-        auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get());
-        render->commandList->ResourceBarrier(1, &barrier);
+        D3D12_RESOURCE_BARRIER barriers[] = {
+            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
+            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
+        };
+        render->commandList->ResourceBarrier(2, barriers);
     }
 
     // Do the draws
@@ -831,7 +860,7 @@ void Draw(Render* render)
     render->commandList->SetGraphicsRootSignature(render->drawRootSignature.get());
     render->commandList->SetPipelineState(render->drawMeshPSO.get());
     render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
-	render->commandList->DispatchMesh(render->constantBufferData.Counts.x, 1, 1);
+	render->commandList->DispatchMesh(render->numInstances * 6, 1, 1); // TODO: real cluster count
 
 
     {

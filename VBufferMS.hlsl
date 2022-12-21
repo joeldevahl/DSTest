@@ -20,6 +20,11 @@ void main(
     out vertices VertexAttributes verts[128]
 )
 {
+
+	ByteAddressBuffer visibleClustersCounter = ResourceDescriptorHeap[VISIBLE_CLUSTERS_COUNTER_UAV];
+    if (gid >= visibleClustersCounter.Load(0))
+        return;
+
 	ByteAddressBuffer visibleInstances = ResourceDescriptorHeap[VISIBLE_INSTANCES_SRV];
 	ByteAddressBuffer visibleClusters = ResourceDescriptorHeap[VISIBLE_CLUSTERS_SRV];
     uint packedClusterInstance = visibleClusters.Load(gid * 4);

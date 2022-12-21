@@ -14,7 +14,14 @@ void main(uint3 dtid : SV_DispatchThreadID)
 	Instance instance = GetInstance(instanceIndex);
 	Mesh mesh = GetMesh(instance.MeshIndex);
 
-	// TODO: multiple clusters and what not
-	uint val = (mesh.ClusterStart & 0x0000ffff) | (instanceIndex << 16);
-	visibleClusters.Store(dtid.x * 4, val);
+	RWByteAddressBuffer visibleClustersCounter = ResourceDescriptorHeap[VISIBLE_CLUSTERS_COUNTER_UAV];
+	uint offset = 0;
+	visibleClustersCounter.InterlockedAdd(0, mesh.ClusterCount, offset); // TODO: restructure this dispatch to do one instance per wave
+
+	for (int i = 0; i < mesh.ClusterCount; ++i)
+	{
+		uint val = ((mesh.ClusterStart + i) & 0x0000ffff) | (instanceIndex << 16);
+
+		visibleClusters.Store((offset + i) * 4, val);
+	}
 }
