@@ -61,5 +61,8 @@
     <ClInclude Include="Common.h">
       <Filter>Resource Files</Filter>
     </ClInclude>
+    <ClInclude Include="meshopt.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

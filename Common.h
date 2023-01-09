@@ -25,7 +25,7 @@ CB_ALIGN struct Constants
 
 struct Vertex
 {
-    float4 Position;
+    float3 Position;
 };
 
 struct Instance

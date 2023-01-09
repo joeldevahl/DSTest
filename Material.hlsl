@@ -25,8 +25,22 @@ void main(uint2 dtid : SV_DispatchThreadID)
     uint visibleInstanceIndex = c >> 16;
 
     uint instanceIndex = visibleInstances.Load(visibleInstanceIndex * 4);
+
+	Cluster cluster = GetCluster(clusterIndex);
+	uint3 tri = GetTri(cluster.IndexStart + primitiveIndex * 3);
+	float3 v0 = GetVertex(cluster.VertexStart + tri.x);
+	float3 v1 = GetVertex(cluster.VertexStart + tri.y);
+	float3 v2 = GetVertex(cluster.VertexStart + tri.z);
+
+	float3 n = normalize(cross(v1 - v0, v2 - v0));
+
+	float3 l = normalize(float3(10.0f, 10.0f, 0.0f) - v0);
+
+
+	float a = 0.5f + dot(n, l) * 0.5;
+
     Instance instance = GetInstance(instanceIndex);
     Material material = GetMaterial(instance.MaterialIndex);
 
-	colorBuffer[dtid] = material.Color;
+	colorBuffer[dtid] = material.Color * a;
 }
