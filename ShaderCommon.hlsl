@@ -10,12 +10,6 @@ struct Payload
 
 ConstantBuffer<Constants> constants : register(b0);
 
-struct DispatchParameters
-{
-	uint offset;
-};
-ConstantBuffer<DispatchParameters> dispatchParameters : register(b1);
-
 StructuredBuffer<Instance> GetInstanceBuffer() { return ResourceDescriptorHeap[INSTANCE_BUFFER_SRV]; }
 StructuredBuffer<Mesh> GetMeshBuffer() { return ResourceDescriptorHeap[MESH_BUFFER_SRV]; }
 StructuredBuffer<Cluster> GetClusterBuffer() { return ResourceDescriptorHeap[CLUSTER_BUFFER_SRV]; }

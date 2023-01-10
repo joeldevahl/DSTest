@@ -3,7 +3,6 @@
 [numthreads(128, 1, 1)]
 void main(uint dtid : SV_DispatchThreadID)
 {
-	// TODO: handle dispatch of more than 65535 instances
 	if (dtid >= constants.Counts.x)
 		return;
 

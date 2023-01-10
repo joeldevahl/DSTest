@@ -16,7 +16,7 @@
 #define DEPTHBUFFER_SRV 18
 
 // HACKS TO REMOVE
-#define VBUFFER_SRV 15
+#define VBUFFER_SRV 16
 
 CB_ALIGN struct Constants
 {

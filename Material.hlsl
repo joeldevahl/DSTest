@@ -12,7 +12,7 @@ void main(uint2 dtid : SV_DispatchThreadID)
 	Texture2D<float> depthBuffer = ResourceDescriptorHeap[DEPTHBUFFER_SRV];
 	RWTexture2D<float4> colorBuffer = ResourceDescriptorHeap[COLORBUFFER_UAV];
 
-#ifdef defined(DEBUG_VISIBILITY_BUFFER)
+#if defined(DEBUG_VISIBILITY_BUFFER)
 	uint v = vBuffer[dtid];
 	uint primitiveIndex = v & 0x000000FF;
 	uint visibleClusterIndex = v >> 8;
@@ -48,7 +48,7 @@ void main(uint2 dtid : SV_DispatchThreadID)
 
 	float3 n = normalize(cross(v1 - v0, v2 - v0));
 
-	float3 l = normalize(float3(10.0f, 10.0f, 100.0f) - v0);
+	float3 l = normalize(float3(10.0f, 10.0f, 0.0f) - v0);
 
 
 	float a = 0.5f + dot(n, l) * 0.5;

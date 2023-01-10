@@ -3,7 +3,6 @@
 [numthreads(128, 1, 1)]
 void main(uint dtid : SV_DispatchThreadID)
 {
-	// TODO: handle dispatch of more than 65535 visible instances
 	RWByteAddressBuffer visibleInstancesCounter = ResourceDescriptorHeap[VISIBLE_INSTANCES_COUNTER_UAV];
 	if (dtid >= visibleInstancesCounter.Load(0))
 		return;

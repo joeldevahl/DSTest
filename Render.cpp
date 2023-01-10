@@ -590,7 +590,7 @@ void Initialize(Render* render, HWND hwnd)
 	OpenFileForGPU(render, L"indices.raw", indicesFile, indicesSize);
 	OpenFileForGPU(render, L"materials.raw", materialsFile, materialsSize);
     render->numInstances = instancesSize / sizeof(Instance);
-    render->maxNumClusters = 32 * 1024;
+    render->maxNumClusters = 1; // 65535;
 
     /*
      * Mesh and Instance Pool
@@ -652,11 +652,10 @@ void Initialize(Render* render, HWND hwnd)
      * Root Signature
      */
     {
-        CD3DX12_ROOT_PARAMETER1 rootParameters[2];
+        CD3DX12_ROOT_PARAMETER1 rootParameters[1];
         rootParameters[0].InitAsConstantBufferView(0);
-        rootParameters[1].InitAsConstants(1, 1);
 
-        auto desc = CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC(2, rootParameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED);
+        auto desc = CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC(_countof(rootParameters), rootParameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED);
 
         com_ptr<ID3DBlob> rootBlob;
         com_ptr<ID3DBlob> errorBlob;
@@ -853,7 +852,7 @@ void Draw(Render* render)
 
     // Cull instances
     render->commandList->SetPipelineState(render->instanceCullingPSO.get());
-    render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
+    render->commandList->Dispatch((render->numInstances+ 127) / 128, 1, 1);
 
     {
         D3D12_RESOURCE_BARRIER barriers[] = {
@@ -865,7 +864,7 @@ void Draw(Render* render)
 
     // Cull clusters
     render->commandList->SetPipelineState(render->clusterCullingPSO.get());
-    render->commandList->Dispatch((render->maxNumClusters + 127) / 128, 1, 1);
+	render->commandList->Dispatch((render->maxNumClusters + 127) / 128, 1, 1);
 
     {
         D3D12_RESOURCE_BARRIER barriers[] = {
@@ -887,17 +886,7 @@ void Draw(Render* render)
     render->commandList->SetPipelineState(render->drawMeshPSO.get());
     render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
 
-    int offset = 0;
-    int numLeft = render->maxNumClusters;
-    while (numLeft > 0)
-    {
-        int dispatchCount = numLeft > 65535 ? 65535 : numLeft;
-        render->commandList->SetGraphicsRoot32BitConstant(1, offset, 0);
-        render->commandList->DispatchMesh(dispatchCount, 1, 1);
-
-        offset += dispatchCount;
-        numLeft -= dispatchCount;
-    }
+	render->commandList->DispatchMesh(render->maxNumClusters, 1, 1);
 
     {
         D3D12_RESOURCE_BARRIER barriers[] = {

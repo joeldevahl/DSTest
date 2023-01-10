@@ -20,15 +20,13 @@ void main(
     out vertices VertexAttributes verts[64]
 )
 {
-    uint id = gid + dispatchParameters.offset;
-
 	RWByteAddressBuffer visibleClustersCounter = ResourceDescriptorHeap[VISIBLE_CLUSTERS_COUNTER_UAV];
-    if (id >= visibleClustersCounter.Load(0))
+    if (gid >= visibleClustersCounter.Load(0))
         return;
 
 	ByteAddressBuffer visibleInstances = ResourceDescriptorHeap[VISIBLE_INSTANCES_SRV];
 	ByteAddressBuffer visibleClusters = ResourceDescriptorHeap[VISIBLE_CLUSTERS_SRV];
-    uint packedClusterInstance = visibleClusters.Load(id * 4);
+    uint packedClusterInstance = visibleClusters.Load(gid * 4);
     uint clusterIndex = packedClusterInstance & 0x0000ffff;
     uint visibleInstanceIndex = packedClusterInstance >> 16;
     uint instanceIndex = visibleInstances.Load(visibleInstanceIndex * 4);
@@ -41,7 +39,7 @@ void main(
 	if (gtid < cluster.PrimitiveCount)
 	{
 		tri[gtid] = GetTri(cluster.PrimitiveStart + gtid);
-		prims[gtid].PackedOutput = (id << 8) | (gtid & 0x000000FF);
+		prims[gtid].PackedOutput = (gid << 8) | (gtid & 0x000000FF);
 	}
     
 	if (gtid < cluster.VertexCount)
