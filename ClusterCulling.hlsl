@@ -1,15 +1,17 @@
 #include "ShaderCommon.hlsl"
 
 [numthreads(128, 1, 1)]
-void main(uint3 dtid : SV_DispatchThreadID)
+void main(uint dtid : SV_DispatchThreadID)
 {
-	if (dtid.x >= constants.Counts.x)
+	// TODO: handle dispatch of more than 65535 visible instances
+	RWByteAddressBuffer visibleInstancesCounter = ResourceDescriptorHeap[VISIBLE_INSTANCES_COUNTER_UAV];
+	if (dtid >= visibleInstancesCounter.Load(0))
 		return;
 
 	ByteAddressBuffer visibleInstances = ResourceDescriptorHeap[VISIBLE_INSTANCES_SRV];
 	RWByteAddressBuffer visibleClusters = ResourceDescriptorHeap[VISIBLE_CLUSTERS_UAV];
 
-	uint instanceIndex = visibleInstances.Load(dtid.x * 4);
+	uint instanceIndex = visibleInstances.Load(dtid * 4);
 
 	Instance instance = GetInstance(instanceIndex);
 	Mesh mesh = GetMesh(instance.MeshIndex);

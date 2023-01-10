@@ -15,14 +15,14 @@ struct VertexAttributes
 void main(
     uint gtid : SV_GroupThreadID,
     uint gid : SV_GroupID,
-    out indices uint3 tri[64],
-    out primitives PrimitiveAttributes prims[64],
-    out vertices VertexAttributes verts[124]
+    out indices uint3 tri[124],
+    out primitives PrimitiveAttributes prims[124],
+    out vertices VertexAttributes verts[64]
 )
 {
     uint id = gid + dispatchParameters.offset;
 
-	ByteAddressBuffer visibleClustersCounter = ResourceDescriptorHeap[VISIBLE_CLUSTERS_COUNTER_UAV];
+	RWByteAddressBuffer visibleClustersCounter = ResourceDescriptorHeap[VISIBLE_CLUSTERS_COUNTER_UAV];
     if (id >= visibleClustersCounter.Load(0))
         return;
 
@@ -36,21 +36,20 @@ void main(
     Cluster cluster = GetCluster(clusterIndex);
     Instance instance = GetInstance(instanceIndex);
 
-    uint primitiveCount = cluster.IndexCount / 3; // TODO: precalc?
-    SetMeshOutputCounts(cluster.VertexCount, primitiveCount);
+    SetMeshOutputCounts(cluster.VertexCount, cluster.PrimitiveCount);
+ 
+	if (gtid < cluster.PrimitiveCount)
+	{
+		tri[gtid] = GetTri(cluster.PrimitiveStart + gtid);
+		prims[gtid].PackedOutput = (id << 8) | (gtid & 0x000000FF);
+	}
+    
+	if (gtid < cluster.VertexCount)
+	{
+		float3 vert = GetVertex(cluster.VertexStart + gtid);
 
-    if (gtid < primitiveCount)
-    {
-        tri[gtid] = GetTri(cluster.IndexStart + gtid * 3);
-        prims[gtid].PackedOutput = (id << 8) | (gtid & 0x000000FF);
-    }
+		vert.xyz += instance.Position;
 
-    if (gtid < cluster.VertexCount)
-    {
-        float3 vert = GetVertex(cluster.VertexStart + gtid);
-
-        vert.xyz += instance.Position;
-
-        verts[gtid].Position = mul(float4(vert, 1.0), constants.MVP);
-    }
+		verts[gtid].Position = mul(float4(vert, 1.0), constants.MVP);
+	}
 }

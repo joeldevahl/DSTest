@@ -27,6 +27,5 @@ Instance GetInstance(uint idx) { return GetInstanceBuffer()[idx]; }
 Mesh GetMesh(uint idx) { return GetMeshBuffer()[idx]; }
 Cluster GetCluster(uint idx) { return GetClusterBuffer()[idx]; }
 float3 GetVertex(uint idx) { return asfloat(GetVertexDataBuffer().Load3(idx * 12)); }
-uint GetIndex(uint idx) { return GetIndexDataBuffer().Load(idx * 4); } // TODO: 8 bit indices
-uint3 GetTri(uint idx) { return GetIndexDataBuffer().Load3(idx * 4); }
+uint3 GetTri(uint idx) { return GetIndexDataBuffer().Load3(idx * 12); }
 Material GetMaterial(uint idx) { return GetMaterialBuffer()[idx]; }

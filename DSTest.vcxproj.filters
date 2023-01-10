@@ -47,6 +47,9 @@
     <FxCompile Include="Material.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
+    <FxCompile Include="FrameSetup.hlsl">
+      <Filter>Resource Files</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Render.h">

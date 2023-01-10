@@ -113,11 +113,13 @@ struct Render
 
     Buffer visibleInstances;
     Buffer visibleClusters;
+    Buffer visibleInstancesCounter;
     Buffer visibleClustersCounter;
 
     com_ptr<ID3D12RootSignature> drawRootSignature;
     com_ptr<ID3D12PipelineState> drawMeshPSO;
 
+    com_ptr<ID3D12PipelineState> frameSetupPSO;
     com_ptr<ID3D12PipelineState> instanceCullingPSO;
     com_ptr<ID3D12PipelineState> clusterCullingPSO;
     com_ptr<ID3D12PipelineState> materialPSO;
@@ -588,7 +590,7 @@ void Initialize(Render* render, HWND hwnd)
 	OpenFileForGPU(render, L"indices.raw", indicesFile, indicesSize);
 	OpenFileForGPU(render, L"materials.raw", materialsFile, materialsSize);
     render->numInstances = instancesSize / sizeof(Instance);
-    render->maxNumClusters = 128 * 1024;
+    render->maxNumClusters = 32 * 1024;
 
     /*
      * Mesh and Instance Pool
@@ -634,6 +636,11 @@ void Initialize(Render* render, HWND hwnd)
         .WithName(L"VisibleClustersBuffer")
         .WithSRV(VISIBLE_CLUSTERS_SRV)
         .WithUAV(VISIBLE_CLUSTERS_UAV)
+        .WithRAW());
+    CreateBuffer(render, &render->visibleInstancesCounter,
+        BufferDesc(1, sizeof(UINT))
+        .WithName(L"VisibleInstancesCounter")
+        .WithUAV(VISIBLE_INSTANCES_COUNTER_UAV)
         .WithRAW());
     CreateBuffer(render, &render->visibleClustersCounter,
         BufferDesc(1, sizeof(UINT))
@@ -704,11 +711,20 @@ void Initialize(Render* render, HWND hwnd)
         {
             byte* data;
             uint32_t size;
-        } instanceCullingComputeShader, clusterCullingComputeShader, materialComputeShader;
+        } frameSetup, instanceCullingComputeShader, clusterCullingComputeShader, materialComputeShader;
 
+        ReadDataFromFile(L"x64/Debug/FrameSetup.cso", &frameSetup.data, &frameSetup.size);
         ReadDataFromFile(L"x64/Debug/InstanceCulling.cso", &instanceCullingComputeShader.data, &instanceCullingComputeShader.size);
         ReadDataFromFile(L"x64/Debug/ClusterCulling.cso", &clusterCullingComputeShader.data, &clusterCullingComputeShader.size);
         ReadDataFromFile(L"x64/Debug/Material.cso", &materialComputeShader.data, &materialComputeShader.size);
+
+        {
+			D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
+			desc.pRootSignature = render->drawRootSignature.get();
+			desc.CS = { frameSetup.data, frameSetup.size};
+
+			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->frameSetupPSO.put())));
+        }
 
         {
 			D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
@@ -807,7 +823,8 @@ void Draw(Render* render)
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
 
     XMMATRIX proj = XMMatrixPerspectiveFovRH(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
-    XMStoreFloat4x4(&render->constantBufferData.MVP, XMMatrixTranspose(proj));
+    XMMATRIX view = XMMatrixTranslation(0.0f, 0.0f, -10.0f);
+    XMStoreFloat4x4(&render->constantBufferData.MVP, XMMatrixTranspose(XMMatrixMultiply(view, proj)));
     render->constantBufferData.Counts.x = render->numInstances;
     render->constantBufferData.Counts.y = render->maxNumClusters;
     render->constantBufferData.Counts.z = 0;
@@ -822,6 +839,18 @@ void Draw(Render* render)
     render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
     render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
 
+    // Setup buffers and counters for the frame
+    render->commandList->SetPipelineState(render->frameSetupPSO.get());
+    render->commandList->Dispatch(1, 1, 1);
+
+    {
+        D3D12_RESOURCE_BARRIER barriers[] = {
+            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
+            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
+        };
+        render->commandList->ResourceBarrier(_countof(barriers), barriers);
+    }
+
     // Cull instances
     render->commandList->SetPipelineState(render->instanceCullingPSO.get());
     render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
@@ -829,8 +858,7 @@ void Draw(Render* render)
     {
         D3D12_RESOURCE_BARRIER barriers[] = {
             CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstances.resource.get()),
-            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
-            CD3DX12_RESOURCE_BARRIER::UAV(nullptr),
+            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
         };
         render->commandList->ResourceBarrier(_countof(barriers), barriers);
     }
@@ -844,7 +872,6 @@ void Draw(Render* render)
             CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
             CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
             CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET),
-            CD3DX12_RESOURCE_BARRIER::UAV(nullptr),
         };
         render->commandList->ResourceBarrier(_countof(barriers), barriers);
     }
@@ -876,7 +903,6 @@ void Draw(Render* render)
         D3D12_RESOURCE_BARRIER barriers[] = {
             CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ),
             CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-            CD3DX12_RESOURCE_BARRIER::UAV(nullptr),
         };
         render->commandList->ResourceBarrier(_countof(barriers), barriers);
     }
@@ -889,7 +915,6 @@ void Draw(Render* render)
         D3D12_RESOURCE_BARRIER barriers[] = {
             CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE),
             CD3DX12_RESOURCE_BARRIER::Transition(render->backBuffers[render->frameIndex].get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST),
-            CD3DX12_RESOURCE_BARRIER::UAV(nullptr),
         };
         render->commandList->ResourceBarrier(_countof(barriers), barriers);
     }
@@ -900,7 +925,6 @@ void Draw(Render* render)
     {
         D3D12_RESOURCE_BARRIER barriers[] = {
             CD3DX12_RESOURCE_BARRIER::Transition(render->backBuffers[render->frameIndex].get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT),
-            CD3DX12_RESOURCE_BARRIER::UAV(nullptr),
         };
         render->commandList->ResourceBarrier(_countof(barriers), barriers);
     }

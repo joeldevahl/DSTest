@@ -9,10 +9,11 @@
 #define VISIBLE_INSTANCES_UAV 11
 #define VISIBLE_CLUSTERS_SRV 12
 #define VISIBLE_CLUSTERS_UAV 13
-#define VISIBLE_CLUSTERS_COUNTER_UAV 14
-#define VBUFFER_UAV 15
-#define COLORBUFFER_UAV 16
-#define DEPTHBUFFER_SRV 17
+#define VISIBLE_INSTANCES_COUNTER_UAV 14
+#define VISIBLE_CLUSTERS_COUNTER_UAV 15
+#define VBUFFER_UAV 16
+#define COLORBUFFER_UAV 17
+#define DEPTHBUFFER_SRV 18
 
 // HACKS TO REMOVE
 #define VBUFFER_SRV 15
@@ -43,8 +44,8 @@ struct Mesh
 
 struct Cluster
 {
-    uint IndexStart;
-    uint IndexCount;
+    uint PrimitiveStart;
+    uint PrimitiveCount;
     uint VertexStart;
     uint VertexCount;
 };

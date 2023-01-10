@@ -119,7 +119,7 @@ void Generate()
 					indices.push_back(meshlet_triangles[i]);
 				}
 
-				clusters.push_back(Cluster{ meshlet.triangle_offset * 3, (UINT)indexCount, meshlet.vertex_offset, meshlet.vertex_count });
+				clusters.push_back(Cluster{ meshlet.triangle_offset, (UINT)indexCount / 3, meshlet.vertex_offset, meshlet.vertex_count });
 			}
 		}
 

@@ -1,18 +1,16 @@
 #include "ShaderCommon.hlsl"
 
 [numthreads(128, 1, 1)]
-void main(uint3 dtid : SV_DispatchThreadID)
+void main(uint dtid : SV_DispatchThreadID)
 {
-	if (dtid.x >= constants.Counts.x)
+	// TODO: handle dispatch of more than 65535 instances
+	if (dtid >= constants.Counts.x)
 		return;
 
-	// TODO: remove this hack and clear counter another way
-	if (dtid.x == 0)
-	{
-		RWByteAddressBuffer visibleClustersCounter = ResourceDescriptorHeap[VISIBLE_CLUSTERS_COUNTER_UAV];
-		visibleClustersCounter.Store(0, 0);
-	}
+	RWByteAddressBuffer visibleInstancesCounter = ResourceDescriptorHeap[VISIBLE_INSTANCES_COUNTER_UAV];
+	uint offset = 0;
+	visibleInstancesCounter.InterlockedAdd(0, 1, offset); // TODO: restructure this dispatch to do one instance per wave
 
 	RWByteAddressBuffer visibleInstances = ResourceDescriptorHeap[VISIBLE_INSTANCES_UAV];
-	visibleInstances.Store(dtid.x * 4, dtid.x);
+	visibleInstances.Store(offset * 4, dtid);
 }
