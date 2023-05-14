@@ -46,7 +46,7 @@ void main(uint2 dtid : SV_DispatchThreadID)
 	float3 v1 = GetVertex(cluster.VertexStart + tri.y);
 	float3 v2 = GetVertex(cluster.VertexStart + tri.z);
 
-	float3 n = normalize(cross(v1 - v0, v2 - v0));
+	float3 n = normalize(cross(v2 - v0, v1 - v0));
 
 	float3 l = normalize(float3(10.0f, 10.0f, 0.0f) - v0);
 

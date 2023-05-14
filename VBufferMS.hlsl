@@ -20,10 +20,6 @@ void main(
     out vertices VertexAttributes verts[64]
 )
 {
-	RWByteAddressBuffer visibleClustersCounter = ResourceDescriptorHeap[VISIBLE_CLUSTERS_COUNTER_UAV];
-    if (gid >= visibleClustersCounter.Load(0))
-        return;
-
 	ByteAddressBuffer visibleInstances = ResourceDescriptorHeap[VISIBLE_INSTANCES_SRV];
 	ByteAddressBuffer visibleClusters = ResourceDescriptorHeap[VISIBLE_CLUSTERS_SRV];
     uint packedClusterInstance = visibleClusters.Load(gid * 4);
@@ -46,8 +42,8 @@ void main(
 	{
 		float3 vert = GetVertex(cluster.VertexStart + gtid);
 
-		vert.xyz += instance.Position;
+		float4 transformedVert = mul(float4(vert, 1.0), instance.ModelMatrix);
 
-		verts[gtid].Position = mul(float4(vert, 1.0), constants.MVP);
+		verts[gtid].Position = mul(transformedVert, constants.ViewProjectionMatrix);
 	}
 }

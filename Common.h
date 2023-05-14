@@ -18,9 +18,11 @@
 // HACKS TO REMOVE
 #define VBUFFER_SRV 16
 
+#define MAX_ELEMENTS 65535
+
 CB_ALIGN struct Constants
 {
-    float4x4 MVP;
+    float4x4 ViewProjectionMatrix;
     uint4 Counts;
 };
 
@@ -31,7 +33,7 @@ struct Vertex
 
 struct Instance
 {
-    float3 Position;
+    float4x4 ModelMatrix;
     uint MeshIndex;
     uint MaterialIndex;
 };

@@ -8,14 +8,24 @@
         {
             "name" : "Scene",
             "nodes" : [
-                0
+                0,
+                1
             ]
         }
     ],
     "nodes" : [
         {
             "mesh" : 0,
-            "name" : "Icosphere"
+            "name" : "Icosphere",
+            "translation" : [
+                2,
+                0,
+                -2
+            ]
+        },
+        {
+            "mesh" : 1,
+            "name" : "Icosphere.001"
         }
     ],
     "meshes" : [
@@ -24,9 +34,24 @@
             "primitives" : [
                 {
                     "attributes" : {
-                        "POSITION" : 0
+                        "POSITION" : 0,
+                        "TEXCOORD_0" : 1,
+                        "NORMAL" : 2
                     },
-                    "indices" : 1
+                    "indices" : 3
+                }
+            ]
+        },
+        {
+            "name" : "Icosphere.001",
+            "primitives" : [
+                {
+                    "attributes" : {
+                        "POSITION" : 4,
+                        "TEXCOORD_0" : 5,
+                        "NORMAL" : 6
+                    },
+                    "indices" : 3
                 }
             ]
         }
@@ -35,43 +60,113 @@
         {
             "bufferView" : 0,
             "componentType" : 5126,
-            "count" : 42,
+            "count" : 960,
             "max" : [
-                1.3838558197021484,
-                1.4287195205688477,
-                1.5163108110427856
+                1,
+                1,
+                0.9999999403953552
             ],
             "min" : [
-                -1.3838558197021484,
-                -1.4287195205688477,
-                -1.5163108110427856
+                -0.9999999403953552,
+                -1,
+                -0.9999999403953552
             ],
             "type" : "VEC3"
         },
         {
             "bufferView" : 1,
+            "componentType" : 5126,
+            "count" : 960,
+            "type" : "VEC2"
+        },
+        {
+            "bufferView" : 2,
+            "componentType" : 5126,
+            "count" : 960,
+            "type" : "VEC3"
+        },
+        {
+            "bufferView" : 3,
             "componentType" : 5123,
-            "count" : 240,
+            "count" : 960,
             "type" : "SCALAR"
+        },
+        {
+            "bufferView" : 4,
+            "componentType" : 5126,
+            "count" : 960,
+            "max" : [
+                1,
+                1,
+                0.9999999403953552
+            ],
+            "min" : [
+                -0.9999999403953552,
+                -1,
+                -0.9999999403953552
+            ],
+            "type" : "VEC3"
+        },
+        {
+            "bufferView" : 5,
+            "componentType" : 5126,
+            "count" : 960,
+            "type" : "VEC2"
+        },
+        {
+            "bufferView" : 6,
+            "componentType" : 5126,
+            "count" : 960,
+            "type" : "VEC3"
         }
     ],
     "bufferViews" : [
         {
             "buffer" : 0,
-            "byteLength" : 504,
+            "byteLength" : 11520,
             "byteOffset" : 0,
             "target" : 34962
         },
         {
             "buffer" : 0,
-            "byteLength" : 480,
-            "byteOffset" : 504,
+            "byteLength" : 7680,
+            "byteOffset" : 11520,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 11520,
+            "byteOffset" : 19200,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 1920,
+            "byteOffset" : 30720,
             "target" : 34963
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 11520,
+            "byteOffset" : 32640,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 7680,
+            "byteOffset" : 44160,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 11520,
+            "byteOffset" : 51840,
+            "target" : 34962
         }
     ],
     "buffers" : [
         {
-            "byteLength" : 984,
+            "byteLength" : 63360,
             "uri" : "untitled.bin"
         }
     ]

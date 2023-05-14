@@ -22,7 +22,32 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 	if (node->mesh != nullptr)
 	{
 		UINT meshID = node->mesh - data->meshes;
-		instances.push_back(Instance{ {node->translation[0], node->translation[1], node->translation[2] }, 0, meshID });
+		XMMATRIX modelMat = XMMatrixIdentity();
+		if (node->has_matrix)
+		{
+			// We don't handle this for now
+			assert(false);
+		}
+		else
+		{
+			XMFLOAT3 scale(1.0f, 1.0f, 1.0f);
+			XMFLOAT4 rotation(0.0f, 0.0f, 0.0f, 1.0f);
+			XMFLOAT3 translation(0.0f, 0.0f, 0.0f);
+			if (node->has_scale)
+				scale = XMFLOAT3(node->scale);
+			if (node->has_rotation)
+				rotation = XMFLOAT4(node->rotation);
+			if (node->has_translation)
+				translation = XMFLOAT3(node->translation);
+
+			XMMATRIX scaleMat = XMMatrixScalingFromVector(XMLoadFloat3(&scale));
+			XMMATRIX rotationMat = XMMatrixRotationQuaternion(XMLoadFloat4(&rotation));
+			XMMATRIX translationMat = XMMatrixTranslationFromVector(XMLoadFloat3(&translation));
+			modelMat = XMMatrixTranspose(XMMatrixMultiply(XMMatrixMultiply(scaleMat, rotationMat), translationMat));
+		}
+		XMFLOAT4X4 tmp;
+		XMStoreFloat4x4(&tmp, modelMat);
+		instances.push_back(Instance{ tmp, meshID, 0 });
 	}
 		
 	for (int c = 0; c < node->children_count; ++c)
@@ -107,23 +132,28 @@ void Generate()
 			for (int ml = 0; ml < meshlet_count; ++ml)
 			{
 				meshopt_Meshlet& meshlet = meshlets[ml];
+
+				UINT outputVerticesOffset = vertices.size();
 				for (int v = 0; v < meshlet.vertex_count; ++v)
 				{
-					int o = 3 * meshlet_vertices[v];
+					int o = 3 * meshlet_vertices[meshlet.vertex_offset + v];
 					vertices.push_back(Vertex{ float3 { position_ptr[o], position_ptr[o + 1], position_ptr[o + 2] } });
 				}
 
-				int indexCount = meshlet.triangle_count * 3;
-				for (int i = 0; i < indexCount; ++i)
+				UINT outputTriangleOffset = indices.size() / 3;
+				for (int t = 0; t < meshlet.triangle_count; ++t)
 				{
-					indices.push_back(meshlet_triangles[i]);
+					int o = meshlet.triangle_offset + 3 * t;
+					indices.push_back(meshlet_triangles[o + 0]);
+					indices.push_back(meshlet_triangles[o + 2]);
+					indices.push_back(meshlet_triangles[o + 1]);
 				}
 
-				clusters.push_back(Cluster{ meshlet.triangle_offset, (UINT)indexCount / 3, meshlet.vertex_offset, meshlet.vertex_count });
+				clusters.push_back(Cluster{ outputTriangleOffset, meshlet.triangle_count, outputVerticesOffset, meshlet.vertex_count });
 			}
 		}
 
-		meshes.push_back(Mesh{ cluster_start, (UINT)clusters.size() });
+		meshes.push_back(Mesh{ cluster_start, (UINT)clusters.size() - cluster_start });
 	}
 
 	materials.push_back(Material{ {1.0f, 1.0f, 0.0f, 1.0f} });

@@ -1,7 +1,7 @@
 #include "Render.h"
 
 #include <dxgi1_6.h>
-#include "d3dx12.h"
+#include <d3dx12.h>
 #include <dstorage.h>
 #include <winrt/base.h>
 
@@ -10,7 +10,7 @@ using winrt::check_hresult;
 
 #define NUM_QUEUED_FRAMES 3
 
-extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 608; }
+extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 610; }
 extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = u8".\\D3D12\\"; }
 
 enum class RenderTargets : int
@@ -452,7 +452,7 @@ void Initialize(Render* render, HWND hwnd)
             CD3DX12_HEAP_PROPERTIES heapType(D3D12_HEAP_TYPE_DEFAULT);
 
 			D3D12_CLEAR_VALUE vBufferOptimizedClearValue = {};
-			vBufferOptimizedClearValue.Format = DXGI_FORMAT_R32_UINT;
+            vBufferOptimizedClearValue.Format = DXGI_FORMAT_R32_UINT;
             vBufferOptimizedClearValue.Color[0] = 0.0f;
             vBufferOptimizedClearValue.Color[1] = 0.0f;
             vBufferOptimizedClearValue.Color[2] = 0.0f;
@@ -590,7 +590,9 @@ void Initialize(Render* render, HWND hwnd)
 	OpenFileForGPU(render, L"indices.raw", indicesFile, indicesSize);
 	OpenFileForGPU(render, L"materials.raw", materialsFile, materialsSize);
     render->numInstances = instancesSize / sizeof(Instance);
-    render->maxNumClusters = 1; // 65535;
+    render->maxNumClusters = MAX_ELEMENTS;
+
+    assert(render->numInstances <= MAX_ELEMENTS);
 
     /*
      * Mesh and Instance Pool
@@ -643,7 +645,7 @@ void Initialize(Render* render, HWND hwnd)
         .WithUAV(VISIBLE_INSTANCES_COUNTER_UAV)
         .WithRAW());
     CreateBuffer(render, &render->visibleClustersCounter,
-        BufferDesc(1, sizeof(UINT))
+        BufferDesc(1, 3 * sizeof(UINT))
         .WithName(L"VisibleClustersCounter")
         .WithUAV(VISIBLE_CLUSTERS_COUNTER_UAV)
         .WithRAW());
@@ -802,6 +804,9 @@ void Initialize(Render* render, HWND hwnd)
         }
     }
 
+    /*
+     * Command signature
+     */
     {
         D3D12_INDIRECT_ARGUMENT_DESC arg {};
         arg.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH;
@@ -822,8 +827,11 @@ void Draw(Render* render)
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
 
     XMMATRIX proj = XMMatrixPerspectiveFovRH(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
-    XMMATRIX view = XMMatrixTranslation(0.0f, 0.0f, -10.0f);
-    XMStoreFloat4x4(&render->constantBufferData.MVP, XMMatrixTranspose(XMMatrixMultiply(view, proj)));
+	XMFLOAT3 eye(5.0f, 2.0f, 3.0f);
+	XMFLOAT3 at(0.0f, 0.0f, 0.0f);
+	XMFLOAT3 up(0.0f, 1.0f, 0.0f);
+    XMMATRIX view = XMMatrixLookAtRH(XMLoadFloat3(&eye), XMLoadFloat3(&at), XMLoadFloat3(&up));
+    XMStoreFloat4x4(&render->constantBufferData.ViewProjectionMatrix, XMMatrixTranspose(XMMatrixMultiply(view, proj)));
     render->constantBufferData.Counts.x = render->numInstances;
     render->constantBufferData.Counts.y = render->maxNumClusters;
     render->constantBufferData.Counts.z = 0;
@@ -852,7 +860,7 @@ void Draw(Render* render)
 
     // Cull instances
     render->commandList->SetPipelineState(render->instanceCullingPSO.get());
-    render->commandList->Dispatch((render->numInstances+ 127) / 128, 1, 1);
+    render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
 
     {
         D3D12_RESOURCE_BARRIER barriers[] = {
@@ -886,7 +894,7 @@ void Draw(Render* render)
     render->commandList->SetPipelineState(render->drawMeshPSO.get());
     render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
 
-	render->commandList->DispatchMesh(render->maxNumClusters, 1, 1);
+    render->commandList->ExecuteIndirect(render->commandSignature.get(), 1, render->visibleClustersCounter.resource.get(), 0, nullptr, 0);
 
     {
         D3D12_RESOURCE_BARRIER barriers[] = {

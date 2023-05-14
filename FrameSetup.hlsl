@@ -10,5 +10,7 @@ void main(uint dtid : SV_DispatchThreadID)
 
 		RWByteAddressBuffer visibleClustersCounter = ResourceDescriptorHeap[VISIBLE_CLUSTERS_COUNTER_UAV];
 		visibleClustersCounter.Store(0, 0);
+		visibleClustersCounter.Store(4, 1);
+		visibleClustersCounter.Store(8, 1);
 	}
 }
