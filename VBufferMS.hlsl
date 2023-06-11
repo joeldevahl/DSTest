@@ -40,7 +40,7 @@ void main(
     
 	if (gtid < cluster.VertexCount)
 	{
-		float3 vert = GetVertex(cluster.VertexStart + gtid);
+		float3 vert = GetPosition(cluster.VertexStart + gtid);
 
 		float4 transformedVert = mul(float4(vert, 1.0), instance.ModelMatrix);
 

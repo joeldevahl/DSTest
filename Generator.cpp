@@ -56,24 +56,27 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 
 void Generate()
 {
-	std::vector<Vertex> vertices;
-	std::vector<UINT> indices;
-	std::vector<Cluster> clusters;
-	std::vector<Mesh> meshes;
-	std::vector<Material> materials;
-	std::vector<Instance> instances;
+	std::vector<float3> out_positions;
+	std::vector<float3> out_normals;
+	std::vector<float4> out_tangents;
+	std::vector<float2> out_texcoords;
+	std::vector<UINT> out_indices;
+	std::vector<Cluster> out_clusters;
+	std::vector<Mesh> out_meshes;
+	std::vector<Material> out_materials;
+	std::vector<Instance> out_instances;
 
 	cgltf_options options = {};
 	cgltf_data* data = nullptr;
-	cgltf_result result = cgltf_parse_file(&options, "untitled.gltf", &data);
+	cgltf_result result = cgltf_parse_file(&options, "NewSponza_Main_glTF_002.gltf", &data);
 	assert(result == cgltf_result_success);
 
-	result = cgltf_load_buffers(&options, data, "untitled.bin");
+	result = cgltf_load_buffers(&options, data, "NewSponza_Main_glTF_002.bin");
 	assert(result == cgltf_result_success);
 
 	for (int m = 0; m < data->meshes_count; ++m)
 	{
-		UINT cluster_start = clusters.size();
+		UINT cluster_start = out_clusters.size();
 		for (int p = 0; p < data->meshes[m].primitives_count; ++p)
 		{
 			cgltf_primitive& primitive = data->meshes[m].primitives[p];
@@ -87,6 +90,30 @@ void Generate()
 			}
 			assert(positions != nullptr);
 
+			cgltf_attribute* normals = nullptr;
+			for (int a = 0; a < primitive.attributes_count; ++a)
+			{
+				if (primitive.attributes[a].type == cgltf_attribute_type_normal)
+					normals = &primitive.attributes[a];
+			}
+			assert(normals != nullptr);
+
+			cgltf_attribute* tangents = nullptr;
+			for (int a = 0; a < primitive.attributes_count; ++a)
+			{
+				if (primitive.attributes[a].type == cgltf_attribute_type_tangent)
+					tangents = &primitive.attributes[a];
+			}
+			assert(tangents != nullptr);
+
+			cgltf_attribute* texcoords = nullptr;
+			for (int a = 0; a < primitive.attributes_count; ++a)
+			{
+				if (primitive.attributes[a].type == cgltf_attribute_type_texcoord)
+					texcoords = &primitive.attributes[a];
+			}
+			assert(texcoords != nullptr);
+
 			cgltf_accessor* positions_accessor = positions->data;
 			assert(positions_accessor != nullptr);
 			assert(positions_accessor->type == cgltf_type_vec3);
@@ -95,6 +122,33 @@ void Generate()
 			cgltf_buffer* position_buffer = positions_accessor->buffer_view->buffer;
 			char* position_ptr_raw = reinterpret_cast<char*>(position_buffer->data) + positions_accessor->buffer_view->offset + positions_accessor->offset;
 			float* position_ptr = reinterpret_cast<float*>(position_ptr_raw);
+
+			cgltf_accessor* normals_accessor = normals->data;
+			assert(normals_accessor != nullptr);
+			assert(normals_accessor->type == cgltf_type_vec3);
+			assert(normals_accessor->component_type == cgltf_component_type_r_32f);
+			assert(normals_accessor->stride == 3 * sizeof(float));
+			cgltf_buffer* normal_buffer = normals_accessor->buffer_view->buffer;
+			char* normal_ptr_raw = reinterpret_cast<char*>(normal_buffer->data) + normals_accessor->buffer_view->offset + normals_accessor->offset;
+			float* normal_ptr = reinterpret_cast<float*>(normal_ptr_raw);
+
+			cgltf_accessor* tangents_accessor = tangents->data;
+			assert(tangents_accessor != nullptr);
+			assert(tangents_accessor->type == cgltf_type_vec4);
+			assert(tangents_accessor->component_type == cgltf_component_type_r_32f);
+			assert(tangents_accessor->stride == 4 * sizeof(float));
+			cgltf_buffer* tangent_buffer = tangents_accessor->buffer_view->buffer;
+			char* tangent_ptr_raw = reinterpret_cast<char*>(tangent_buffer->data) + tangents_accessor->buffer_view->offset + tangents_accessor->offset;
+			float* tangent_ptr = reinterpret_cast<float*>(tangent_ptr_raw);
+
+			cgltf_accessor* texcoords_accessor = texcoords->data;
+			assert(texcoords_accessor != nullptr);
+			assert(texcoords_accessor->type == cgltf_type_vec2);
+			assert(texcoords_accessor->component_type == cgltf_component_type_r_32f);
+			assert(texcoords_accessor->stride == 2 * sizeof(float));
+			cgltf_buffer* texcoord_buffer = texcoords_accessor->buffer_view->buffer;
+			char* texcoord_ptr_raw = reinterpret_cast<char*>(texcoord_buffer->data) + texcoords_accessor->buffer_view->offset + texcoords_accessor->offset;
+			float* texcoord_ptr = reinterpret_cast<float*>(texcoord_ptr_raw);
 
 			cgltf_accessor* indices_accessor = primitive.indices;
 			assert(indices_accessor != nullptr);
@@ -133,42 +187,50 @@ void Generate()
 			{
 				meshopt_Meshlet& meshlet = meshlets[ml];
 
-				UINT outputVerticesOffset = vertices.size();
+				UINT outputVerticesOffset = out_positions.size();
 				for (int v = 0; v < meshlet.vertex_count; ++v)
 				{
-					int o = 3 * meshlet_vertices[meshlet.vertex_offset + v];
-					vertices.push_back(Vertex{ float3 { position_ptr[o], position_ptr[o + 1], position_ptr[o + 2] } });
+					int o2 = 2 * meshlet_vertices[meshlet.vertex_offset + v];
+					int o3 = 3 * meshlet_vertices[meshlet.vertex_offset + v];
+					int o4 = 3 * meshlet_vertices[meshlet.vertex_offset + v];
+					out_positions.push_back(float3 { position_ptr[o3], position_ptr[o3 + 1], position_ptr[o3 + 2] });
+					out_normals.push_back(float3 { normal_ptr[o3], normal_ptr[o3 + 1], normal_ptr[o3 + 2] });
+					out_tangents.push_back(float4 { tangent_ptr[o4], tangent_ptr[o4 + 1], tangent_ptr[o4 + 2], tangent_ptr[o4 + 3] });
+					out_texcoords.push_back(float2 { texcoord_ptr[o2], texcoord_ptr[o2 + 1] });
 				}
 
-				UINT outputTriangleOffset = indices.size() / 3;
+				UINT outputTriangleOffset = out_indices.size() / 3;
 				for (int t = 0; t < meshlet.triangle_count; ++t)
 				{
 					int o = meshlet.triangle_offset + 3 * t;
-					indices.push_back(meshlet_triangles[o + 0]);
-					indices.push_back(meshlet_triangles[o + 2]);
-					indices.push_back(meshlet_triangles[o + 1]);
+					out_indices.push_back(meshlet_triangles[o + 0]);
+					out_indices.push_back(meshlet_triangles[o + 2]);
+					out_indices.push_back(meshlet_triangles[o + 1]);
 				}
 
-				clusters.push_back(Cluster{ outputTriangleOffset, meshlet.triangle_count, outputVerticesOffset, meshlet.vertex_count });
+				out_clusters.push_back(Cluster{ outputTriangleOffset, meshlet.triangle_count, outputVerticesOffset, meshlet.vertex_count });
 			}
 		}
 
-		meshes.push_back(Mesh{ cluster_start, (UINT)clusters.size() - cluster_start });
+		out_meshes.push_back(Mesh{ cluster_start, (UINT)out_clusters.size() - cluster_start });
 	}
 
-	materials.push_back(Material{ {1.0f, 1.0f, 0.0f, 1.0f} });
+	out_materials.push_back(Material{ {1.0f, 1.0f, 0.0f, 1.0f} });
 
 	assert(data->scene != nullptr);
 
 	for (int n = 0; n < data->scene->nodes_count; ++n)
-		ConvertNodeHierarchy(data, instances, data->scene->nodes[n]);
+		ConvertNodeHierarchy(data, out_instances, data->scene->nodes[n]);
 
-	OutputDataToFile(L"vertices.raw", vertices);
-	OutputDataToFile(L"indices.raw", indices);
-	OutputDataToFile(L"clusters.raw", clusters);
-	OutputDataToFile(L"meshes.raw", meshes);
-	OutputDataToFile(L"materials.raw", materials);
-	OutputDataToFile(L"instances.raw", instances);
+	OutputDataToFile(L"positions.raw", out_positions);
+	OutputDataToFile(L"normals.raw", out_normals);
+	OutputDataToFile(L"tangents.raw", out_tangents);
+	OutputDataToFile(L"texcoords.raw", out_texcoords);
+	OutputDataToFile(L"indices.raw", out_indices);
+	OutputDataToFile(L"clusters.raw", out_clusters);
+	OutputDataToFile(L"meshes.raw", out_meshes);
+	OutputDataToFile(L"materials.raw", out_materials);
+	OutputDataToFile(L"instances.raw", out_instances);
 
 	cgltf_free(data);
 }

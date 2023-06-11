@@ -106,7 +106,10 @@ struct Render
     Buffer instancesBuffer;
     Buffer meshesBuffer;
     Buffer clustersBuffer;
-    Buffer vertexDataBuffer;
+    Buffer positionsBuffer;
+    Buffer normalsBuffer;
+    Buffer tangentsBuffer;
+    Buffer texcoordsBuffer;
     Buffer indexDataBuffer;
     Buffer materialsBuffer;
     char* cbvDataBegin;
@@ -574,19 +577,28 @@ void Initialize(Render* render, HWND hwnd)
     com_ptr<IDStorageFile> instancesFile;
     com_ptr<IDStorageFile> meshesFile;
     com_ptr<IDStorageFile> clustersFile;
-    com_ptr<IDStorageFile> verticesFile;
+    com_ptr<IDStorageFile> positionsFile;
+    com_ptr<IDStorageFile> normalsFile;
+    com_ptr<IDStorageFile> tangentsFile;
+    com_ptr<IDStorageFile> texcoordsFile;
     com_ptr<IDStorageFile> indicesFile;
     com_ptr<IDStorageFile> materialsFile;
     UINT32 instancesSize = 0;
     UINT32 meshesSize = 0;
     UINT32 clustersSize = 0;
-    UINT32 verticesSize = 0;
+    UINT32 positionsSize = 0;
+    UINT32 normalsSize = 0;
+    UINT32 tangentsSize = 0;
+    UINT32 texcoordsSize = 0;
     UINT32 indicesSize = 0;
     UINT32 materialsSize = 0;
 	OpenFileForGPU(render, L"instances.raw", instancesFile, instancesSize);
 	OpenFileForGPU(render, L"meshes.raw", meshesFile, meshesSize);
 	OpenFileForGPU(render, L"clusters.raw", clustersFile, clustersSize);
-	OpenFileForGPU(render, L"vertices.raw", verticesFile, verticesSize);
+	OpenFileForGPU(render, L"positions.raw", positionsFile, positionsSize);
+	OpenFileForGPU(render, L"normals.raw", normalsFile, normalsSize);
+	OpenFileForGPU(render, L"tangents.raw", tangentsFile, tangentsSize);
+	OpenFileForGPU(render, L"texcoords.raw", texcoordsFile, texcoordsSize);
 	OpenFileForGPU(render, L"indices.raw", indicesFile, indicesSize);
 	OpenFileForGPU(render, L"materials.raw", materialsFile, materialsSize);
     render->numInstances = instancesSize / sizeof(Instance);
@@ -609,10 +621,25 @@ void Initialize(Render* render, HWND hwnd)
         BufferDesc(clustersSize / sizeof(Cluster), sizeof(Cluster))
         .WithName(L"ClustersBuffer")
         .WithSRV(CLUSTER_BUFFER_SRV));
-	CreateBuffer(render, &render->vertexDataBuffer,
-        BufferDesc(verticesSize / sizeof(Vertex), sizeof(Vertex))
-        .WithName(L"VertexDataBuffer")
-        .WithSRV(VERTEX_DATA_BUFFER_SRV)
+	CreateBuffer(render, &render->positionsBuffer,
+        BufferDesc(positionsSize / sizeof(float3), sizeof(float3))
+        .WithName(L"PositionsBuffer")
+        .WithSRV(POSITION_DATA_BUFFER_SRV)
+        .WithRAW());
+	CreateBuffer(render, &render->normalsBuffer,
+        BufferDesc(normalsSize / sizeof(float3), sizeof(float3))
+        .WithName(L"NormalsBuffer")
+        .WithSRV(NORMAL_DATA_BUFFER_SRV)
+        .WithRAW());
+	CreateBuffer(render, &render->tangentsBuffer,
+        BufferDesc(tangentsSize / sizeof(float4), sizeof(float4))
+        .WithName(L"TangentsBuffer")
+        .WithSRV(TANGENT_DATA_BUFFER_SRV)
+        .WithRAW());
+	CreateBuffer(render, &render->texcoordsBuffer,
+        BufferDesc(texcoordsSize / sizeof(float2), sizeof(float2))
+        .WithName(L"TexcoordsBuffer")
+        .WithSRV(TEXCOORD_DATA_BUFFER_SRV)
         .WithRAW());
 	CreateBuffer(render, &render->indexDataBuffer,
         BufferDesc(indicesSize / sizeof(UINT), sizeof(UINT))
@@ -766,7 +793,10 @@ void Initialize(Render* render, HWND hwnd)
         LoadFileToGPU(render, instancesFile, render->instancesBuffer.resource.get(), instancesSize);
         LoadFileToGPU(render, meshesFile, render->meshesBuffer.resource.get(), meshesSize);
         LoadFileToGPU(render, clustersFile, render->clustersBuffer.resource.get(), clustersSize);
-        LoadFileToGPU(render, verticesFile, render->vertexDataBuffer.resource.get(), verticesSize);
+        LoadFileToGPU(render, positionsFile, render->positionsBuffer.resource.get(), positionsSize);
+        LoadFileToGPU(render, normalsFile, render->normalsBuffer.resource.get(), normalsSize);
+        LoadFileToGPU(render, tangentsFile, render->tangentsBuffer.resource.get(), tangentsSize);
+        LoadFileToGPU(render, texcoordsFile, render->texcoordsBuffer.resource.get(), texcoordsSize);
         LoadFileToGPU(render, indicesFile, render->indexDataBuffer.resource.get(), indicesSize);
         LoadFileToGPU(render, materialsFile, render->materialsBuffer.resource.get(), materialsSize);
 
@@ -827,11 +857,14 @@ void Draw(Render* render)
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
 
     XMMATRIX proj = XMMatrixPerspectiveFovRH(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
-	XMFLOAT3 eye(5.0f, 2.0f, 3.0f);
+	XMFLOAT3 eye(4.0f, 2.0f, 3.0f);
 	XMFLOAT3 at(0.0f, 0.0f, 0.0f);
 	XMFLOAT3 up(0.0f, 1.0f, 0.0f);
     XMMATRIX view = XMMatrixLookAtRH(XMLoadFloat3(&eye), XMLoadFloat3(&at), XMLoadFloat3(&up));
-    XMStoreFloat4x4(&render->constantBufferData.ViewProjectionMatrix, XMMatrixTranspose(XMMatrixMultiply(view, proj)));
+    XMMATRIX viewProj = XMMatrixTranspose(XMMatrixMultiply(view, proj));
+    XMMATRIX invViewProj = XMMatrixInverse(nullptr, viewProj);
+    XMStoreFloat4x4(&render->constantBufferData.ViewProjectionMatrix, viewProj);
+    XMStoreFloat4x4(&render->constantBufferData.InverseViewProjectionMatrix, invViewProj);
     render->constantBufferData.Counts.x = render->numInstances;
     render->constantBufferData.Counts.y = render->maxNumClusters;
     render->constantBufferData.Counts.z = 0;

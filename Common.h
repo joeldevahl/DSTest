@@ -1,9 +1,12 @@
 #define INSTANCE_BUFFER_SRV 0
 #define MESH_BUFFER_SRV 1
 #define CLUSTER_BUFFER_SRV 2
-#define VERTEX_DATA_BUFFER_SRV 3
-#define INDEX_DATA_BUFFER_SRV 4
-#define MATERIAL_BUFFER_SRV 5
+#define POSITION_DATA_BUFFER_SRV 3
+#define NORMAL_DATA_BUFFER_SRV 4
+#define TANGENT_DATA_BUFFER_SRV 5
+#define TEXCOORD_DATA_BUFFER_SRV 6
+#define INDEX_DATA_BUFFER_SRV 7
+#define MATERIAL_BUFFER_SRV 8
 
 #define VISIBLE_INSTANCES_SRV 10
 #define VISIBLE_INSTANCES_UAV 11
@@ -23,12 +26,8 @@
 CB_ALIGN struct Constants
 {
     float4x4 ViewProjectionMatrix;
+    float4x4 InverseViewProjectionMatrix;
     uint4 Counts;
-};
-
-struct Vertex
-{
-    float3 Position;
 };
 
 struct Instance
