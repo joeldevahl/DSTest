@@ -54,7 +54,7 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 		ConvertNodeHierarchy(data, instances, node->children[c]);
 }
 
-void Generate()
+void Generate(const char* filename, const char* filenameBin)
 {
 	std::vector<float3> out_positions;
 	std::vector<float3> out_normals;
@@ -68,10 +68,10 @@ void Generate()
 
 	cgltf_options options = {};
 	cgltf_data* data = nullptr;
-	cgltf_result result = cgltf_parse_file(&options, "NewSponza_Main_glTF_002.gltf", &data);
+	cgltf_result result = cgltf_parse_file(&options, filename, &data);
 	assert(result == cgltf_result_success);
 
-	result = cgltf_load_buffers(&options, data, "NewSponza_Main_glTF_002.bin");
+	result = cgltf_load_buffers(&options, data, filenameBin);
 	assert(result == cgltf_result_success);
 
 	for (int m = 0; m < data->meshes_count; ++m)
@@ -83,36 +83,21 @@ void Generate()
 			assert(primitive.type == cgltf_primitive_type_triangles);
 
 			cgltf_attribute* positions = nullptr;
+			cgltf_attribute* normals = nullptr;
+			cgltf_attribute* tangents = nullptr;
+			cgltf_attribute* texcoords = nullptr;
 			for (int a = 0; a < primitive.attributes_count; ++a)
 			{
 				if (primitive.attributes[a].type == cgltf_attribute_type_position)
 					positions = &primitive.attributes[a];
-			}
-			assert(positions != nullptr);
-
-			cgltf_attribute* normals = nullptr;
-			for (int a = 0; a < primitive.attributes_count; ++a)
-			{
-				if (primitive.attributes[a].type == cgltf_attribute_type_normal)
+				else if (primitive.attributes[a].type == cgltf_attribute_type_normal)
 					normals = &primitive.attributes[a];
-			}
-			assert(normals != nullptr);
-
-			cgltf_attribute* tangents = nullptr;
-			for (int a = 0; a < primitive.attributes_count; ++a)
-			{
-				if (primitive.attributes[a].type == cgltf_attribute_type_tangent)
+				else if (primitive.attributes[a].type == cgltf_attribute_type_tangent)
 					tangents = &primitive.attributes[a];
-			}
-			assert(tangents != nullptr);
-
-			cgltf_attribute* texcoords = nullptr;
-			for (int a = 0; a < primitive.attributes_count; ++a)
-			{
-				if (primitive.attributes[a].type == cgltf_attribute_type_texcoord)
+				else if (primitive.attributes[a].type == cgltf_attribute_type_texcoord)
 					texcoords = &primitive.attributes[a];
 			}
-			assert(texcoords != nullptr);
+			assert(positions != nullptr);
 
 			cgltf_accessor* positions_accessor = positions->data;
 			assert(positions_accessor != nullptr);
@@ -123,32 +108,44 @@ void Generate()
 			char* position_ptr_raw = reinterpret_cast<char*>(position_buffer->data) + positions_accessor->buffer_view->offset + positions_accessor->offset;
 			float* position_ptr = reinterpret_cast<float*>(position_ptr_raw);
 
-			cgltf_accessor* normals_accessor = normals->data;
-			assert(normals_accessor != nullptr);
-			assert(normals_accessor->type == cgltf_type_vec3);
-			assert(normals_accessor->component_type == cgltf_component_type_r_32f);
-			assert(normals_accessor->stride == 3 * sizeof(float));
-			cgltf_buffer* normal_buffer = normals_accessor->buffer_view->buffer;
-			char* normal_ptr_raw = reinterpret_cast<char*>(normal_buffer->data) + normals_accessor->buffer_view->offset + normals_accessor->offset;
-			float* normal_ptr = reinterpret_cast<float*>(normal_ptr_raw);
+			float* normal_ptr = nullptr;
+			if (normals)
+			{
+				cgltf_accessor* normals_accessor = normals->data;
+				assert(normals_accessor != nullptr);
+				assert(normals_accessor->type == cgltf_type_vec3);
+				assert(normals_accessor->component_type == cgltf_component_type_r_32f);
+				assert(normals_accessor->stride == 3 * sizeof(float));
+				cgltf_buffer* normal_buffer = normals_accessor->buffer_view->buffer;
+				char* normal_ptr_raw = reinterpret_cast<char*>(normal_buffer->data) + normals_accessor->buffer_view->offset + normals_accessor->offset;
+				normal_ptr = reinterpret_cast<float*>(normal_ptr_raw);
+			}
 
-			cgltf_accessor* tangents_accessor = tangents->data;
-			assert(tangents_accessor != nullptr);
-			assert(tangents_accessor->type == cgltf_type_vec4);
-			assert(tangents_accessor->component_type == cgltf_component_type_r_32f);
-			assert(tangents_accessor->stride == 4 * sizeof(float));
-			cgltf_buffer* tangent_buffer = tangents_accessor->buffer_view->buffer;
-			char* tangent_ptr_raw = reinterpret_cast<char*>(tangent_buffer->data) + tangents_accessor->buffer_view->offset + tangents_accessor->offset;
-			float* tangent_ptr = reinterpret_cast<float*>(tangent_ptr_raw);
+			float* tangent_ptr = nullptr;
+			if (tangents)
+			{
+				cgltf_accessor* tangents_accessor = tangents->data;
+				assert(tangents_accessor != nullptr);
+				assert(tangents_accessor->type == cgltf_type_vec4);
+				assert(tangents_accessor->component_type == cgltf_component_type_r_32f);
+				assert(tangents_accessor->stride == 4 * sizeof(float));
+				cgltf_buffer* tangent_buffer = tangents_accessor->buffer_view->buffer;
+				char* tangent_ptr_raw = reinterpret_cast<char*>(tangent_buffer->data) + tangents_accessor->buffer_view->offset + tangents_accessor->offset;
+				tangent_ptr = reinterpret_cast<float*>(tangent_ptr_raw);
+			}
 
-			cgltf_accessor* texcoords_accessor = texcoords->data;
-			assert(texcoords_accessor != nullptr);
-			assert(texcoords_accessor->type == cgltf_type_vec2);
-			assert(texcoords_accessor->component_type == cgltf_component_type_r_32f);
-			assert(texcoords_accessor->stride == 2 * sizeof(float));
-			cgltf_buffer* texcoord_buffer = texcoords_accessor->buffer_view->buffer;
-			char* texcoord_ptr_raw = reinterpret_cast<char*>(texcoord_buffer->data) + texcoords_accessor->buffer_view->offset + texcoords_accessor->offset;
-			float* texcoord_ptr = reinterpret_cast<float*>(texcoord_ptr_raw);
+			float* texcoord_ptr = nullptr;
+			if (texcoords)
+			{
+				cgltf_accessor* texcoords_accessor = texcoords->data;
+				assert(texcoords_accessor != nullptr);
+				assert(texcoords_accessor->type == cgltf_type_vec2);
+				assert(texcoords_accessor->component_type == cgltf_component_type_r_32f);
+				assert(texcoords_accessor->stride == 2 * sizeof(float));
+				cgltf_buffer* texcoord_buffer = texcoords_accessor->buffer_view->buffer;
+				char* texcoord_ptr_raw = reinterpret_cast<char*>(texcoord_buffer->data) + texcoords_accessor->buffer_view->offset + texcoords_accessor->offset;
+				texcoord_ptr = reinterpret_cast<float*>(texcoord_ptr_raw);
+			}
 
 			cgltf_accessor* indices_accessor = primitive.indices;
 			assert(indices_accessor != nullptr);
@@ -194,9 +191,21 @@ void Generate()
 					int o3 = 3 * meshlet_vertices[meshlet.vertex_offset + v];
 					int o4 = 3 * meshlet_vertices[meshlet.vertex_offset + v];
 					out_positions.push_back(float3 { position_ptr[o3], position_ptr[o3 + 1], position_ptr[o3 + 2] });
-					out_normals.push_back(float3 { normal_ptr[o3], normal_ptr[o3 + 1], normal_ptr[o3 + 2] });
-					out_tangents.push_back(float4 { tangent_ptr[o4], tangent_ptr[o4 + 1], tangent_ptr[o4 + 2], tangent_ptr[o4 + 3] });
-					out_texcoords.push_back(float2 { texcoord_ptr[o2], texcoord_ptr[o2 + 1] });
+
+					float3 normal = float3 { 0.0f, 0.0f, 0.0f };
+					if (normal_ptr)
+						normal = float3 { normal_ptr[o3], normal_ptr[o3 + 1], normal_ptr[o3 + 2] };
+					out_normals.push_back(normal);
+
+					float4 tangent = float4 { 0.0f, 0.0f, 0.0f, 0.0f };
+					if (tangent_ptr)
+						tangent = float4 { tangent_ptr[o4], tangent_ptr[o4 + 1], tangent_ptr[o4 + 2], tangent_ptr[o4 + 3] };
+					out_tangents.push_back(tangent);
+
+					float2 texcoord = float2 { 0.0f, 0.0f };
+					if (texcoord_ptr)
+						texcoord = float2 { texcoord_ptr[o2], texcoord_ptr[o2 + 1] };
+					out_texcoords.push_back(texcoord);
 				}
 
 				UINT outputTriangleOffset = out_indices.size() / 3;

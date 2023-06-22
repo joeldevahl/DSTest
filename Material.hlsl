@@ -1,7 +1,7 @@
 #include "ShaderCommon.hlsl"
 
 //#define DEBUG_VISIBILITY_BUFFER
-#define DEBUG_DEPTH_BUFFER
+//#define DEBUG_DEPTH_BUFFER
 
 float3 Barycentric(float3 p, float3 a, float3 b, float3 c)
 {
