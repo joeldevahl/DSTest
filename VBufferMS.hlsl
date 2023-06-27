@@ -42,8 +42,8 @@ void main(
 	{
 		float3 vert = GetPosition(cluster.VertexStart + gtid);
 
-		float4 transformedVert = mul(float4(vert, 1.0), instance.ModelMatrix);
+		float4 transformedVert = mul(instance.ModelMatrix, float4(vert, 1.0));
 
-		verts[gtid].Position = mul(transformedVert, constants.ViewProjectionMatrix);
+		verts[gtid].Position = mul(constants.ViewProjectionMatrix, transformedVert);
 	}
 }

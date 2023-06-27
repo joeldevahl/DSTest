@@ -1,21 +1,25 @@
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
-
-#include <directxmath.h> // for XMFLOAT4x4
+#include <WindowsNumerics.h>
+using namespace Windows::Foundation::Numerics;
 using namespace DirectX;
+typedef UINT uint;
+typedef DirectX::XMUINT4 uint4;
 
 struct Render;
-
-typedef UINT uint;
-typedef XMUINT4 uint4;
-typedef XMFLOAT2 float2;
-typedef XMFLOAT3 float3;
-typedef XMFLOAT4 float4;
-typedef XMFLOAT4X4 float4x4;
 #define CB_ALIGN _declspec(align(256u)) 
 #include "Common.h"
+
+inline CenterExtentsAABB MinMaxToCenterExtents(const MinMaxAABB& mm)
+{
+	return CenterExtentsAABB{
+		(mm.Min + mm.Max) * 0.5f,
+		(mm.Max - mm.Min) * 0.5f
+    };
+}
 
 Render* CreateRender(UINT width, UINT height);
 void Destroy(Render* render);

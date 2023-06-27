@@ -22,7 +22,7 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 	if (node->mesh != nullptr)
 	{
 		UINT meshID = node->mesh - data->meshes;
-		XMMATRIX modelMat = XMMatrixIdentity();
+		float4x4 modelMat = float4x4::identity();
 		if (node->has_matrix)
 		{
 			// We don't handle this for now
@@ -30,24 +30,23 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 		}
 		else
 		{
-			XMFLOAT3 scale(1.0f, 1.0f, 1.0f);
-			XMFLOAT4 rotation(0.0f, 0.0f, 0.0f, 1.0f);
-			XMFLOAT3 translation(0.0f, 0.0f, 0.0f);
+			float3 scale(1.0f, 1.0f, 1.0f);
+			quaternion rotation(0.0f, 0.0f, 0.0f, 1.0f);
+			float3 translation(0.0f, 0.0f, 0.0f);
 			if (node->has_scale)
-				scale = XMFLOAT3(node->scale);
+				scale = float3(node->scale[0], node->scale[1], node->scale[2]);
 			if (node->has_rotation)
-				rotation = XMFLOAT4(node->rotation);
+				rotation = quaternion(node->rotation[0], node->rotation[1], node->rotation[2], node->rotation[3]);
 			if (node->has_translation)
-				translation = XMFLOAT3(node->translation);
+				translation = float3(node->translation[0], node->translation[1], node->translation[2]);
 
-			XMMATRIX scaleMat = XMMatrixScalingFromVector(XMLoadFloat3(&scale));
-			XMMATRIX rotationMat = XMMatrixRotationQuaternion(XMLoadFloat4(&rotation));
-			XMMATRIX translationMat = XMMatrixTranslationFromVector(XMLoadFloat3(&translation));
-			modelMat = XMMatrixTranspose(XMMatrixMultiply(XMMatrixMultiply(scaleMat, rotationMat), translationMat));
+			float4x4 scaleMat = make_float4x4_scale(scale);
+			float4x4 rotationMat = make_float4x4_from_quaternion(rotation);
+			float4x4 translationMat = make_float4x4_translation(translation);
+
+			modelMat = scaleMat * rotationMat * translationMat;
 		}
-		XMFLOAT4X4 tmp;
-		XMStoreFloat4x4(&tmp, modelMat);
-		instances.push_back(Instance{ tmp, meshID, 0 });
+		instances.push_back(Instance{ modelMat, meshID, 0 });
 	}
 		
 	for (int c = 0; c < node->children_count; ++c)
@@ -77,6 +76,11 @@ void Generate(const char* filename, const char* filenameBin)
 	for (int m = 0; m < data->meshes_count; ++m)
 	{
 		UINT cluster_start = out_clusters.size();
+		MinMaxAABB meshBounds = MinMaxAABB{
+			float3 {FLT_MAX, FLT_MAX, FLT_MAX},
+			float3 {FLT_MIN, FLT_MIN, FLT_MIN},
+		};
+
 		for (int p = 0; p < data->meshes[m].primitives_count; ++p)
 		{
 			cgltf_primitive& primitive = data->meshes[m].primitives[p];
@@ -150,16 +154,28 @@ void Generate(const char* filename, const char* filenameBin)
 			cgltf_accessor* indices_accessor = primitive.indices;
 			assert(indices_accessor != nullptr);
 			assert(indices_accessor->type == cgltf_type_scalar);
-			assert(indices_accessor->component_type == cgltf_component_type_r_16u);
-			assert(indices_accessor->stride == sizeof(UINT16));
 			cgltf_buffer* index_buffer = indices_accessor->buffer_view->buffer;
 			char* index_ptr_raw = reinterpret_cast<char*>(index_buffer->data) + indices_accessor->buffer_view->offset + indices_accessor->offset;
-			UINT16* index_ptr = reinterpret_cast<UINT16*>(index_ptr_raw);
-	
+
+
 			std::vector<UINT> temp_indices(indices_accessor->count);
-			for (int i = 0; i < indices_accessor->count; ++i)
+			if (indices_accessor->component_type == cgltf_component_type_r_16u)
 			{
-				temp_indices[i] = index_ptr[i];
+				assert(indices_accessor->stride == sizeof(UINT16));
+				UINT16* index_ptr = reinterpret_cast<UINT16*>(index_ptr_raw);
+				for (int i = 0; i < indices_accessor->count; ++i)
+				{
+					temp_indices[i] = index_ptr[i];
+				}
+			}
+			else
+			{
+				assert(indices_accessor->component_type == cgltf_component_type_r_32u);
+				UINT32* index_ptr = reinterpret_cast<UINT32*>(index_ptr_raw);
+				for (int i = 0; i < indices_accessor->count; ++i)
+				{
+					temp_indices[i] = index_ptr[i];
+				}
 			}
 
 			const size_t max_vertices = 64;
@@ -185,12 +201,21 @@ void Generate(const char* filename, const char* filenameBin)
 				meshopt_Meshlet& meshlet = meshlets[ml];
 
 				UINT outputVerticesOffset = out_positions.size();
+				MinMaxAABB clusterBounds = MinMaxAABB{
+					float3 {FLT_MAX, FLT_MAX, FLT_MAX},
+					float3 {FLT_MIN, FLT_MIN, FLT_MIN},
+				};
+
 				for (int v = 0; v < meshlet.vertex_count; ++v)
 				{
 					int o2 = 2 * meshlet_vertices[meshlet.vertex_offset + v];
 					int o3 = 3 * meshlet_vertices[meshlet.vertex_offset + v];
 					int o4 = 3 * meshlet_vertices[meshlet.vertex_offset + v];
-					out_positions.push_back(float3 { position_ptr[o3], position_ptr[o3 + 1], position_ptr[o3 + 2] });
+					float3 pos = float3{ position_ptr[o3], position_ptr[o3 + 1], position_ptr[o3 + 2] };
+					out_positions.push_back(pos);
+
+					clusterBounds.Min = min(clusterBounds.Min, pos);
+					clusterBounds.Max = max(clusterBounds.Max, pos);
 
 					float3 normal = float3 { 0.0f, 0.0f, 0.0f };
 					if (normal_ptr)
@@ -217,11 +242,23 @@ void Generate(const char* filename, const char* filenameBin)
 					out_indices.push_back(meshlet_triangles[o + 1]);
 				}
 
-				out_clusters.push_back(Cluster{ outputTriangleOffset, meshlet.triangle_count, outputVerticesOffset, meshlet.vertex_count });
+				out_clusters.push_back(Cluster{
+					outputTriangleOffset,
+					meshlet.triangle_count,
+					outputVerticesOffset,
+					meshlet.vertex_count,
+					MinMaxToCenterExtents(clusterBounds)
+				});
+
+				meshBounds.Min = min(meshBounds.Min, clusterBounds.Min);
+				meshBounds.Max = max(meshBounds.Max, clusterBounds.Max);
 			}
 		}
 
-		out_meshes.push_back(Mesh{ cluster_start, (UINT)out_clusters.size() - cluster_start });
+		out_meshes.push_back(Mesh{
+			cluster_start,
+			(UINT)out_clusters.size() - cluster_start,
+			MinMaxToCenterExtents(meshBounds)});
 	}
 
 	out_materials.push_back(Material{ {1.0f, 1.0f, 0.0f, 1.0f} });

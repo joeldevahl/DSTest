@@ -23,6 +23,19 @@
 
 #define MAX_ELEMENTS 65535
 
+
+struct MinMaxAABB
+{
+    float3 Min;
+    float3 Max;
+};
+
+struct CenterExtentsAABB
+{
+    float3 Center;
+    float3 Extents; // half extents
+};
+
 CB_ALIGN struct Constants
 {
     float4x4 ViewProjectionMatrix;
@@ -35,12 +48,16 @@ struct Instance
     float4x4 ModelMatrix;
     uint MeshIndex;
     uint MaterialIndex;
+
+    CenterExtentsAABB Bounds;
 };
 
 struct Mesh
 {
     uint ClusterStart;
     uint ClusterCount;
+
+    CenterExtentsAABB Bounds;
 };
 
 struct Cluster
@@ -49,9 +66,12 @@ struct Cluster
     uint PrimitiveCount;
     uint VertexStart;
     uint VertexCount;
+
+    CenterExtentsAABB Bounds;
 };
 
 struct Material
 {
     float4 Color;
 };
+

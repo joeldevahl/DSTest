@@ -10,7 +10,7 @@ using winrt::check_hresult;
 
 #define NUM_QUEUED_FRAMES 3
 
-extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 610; }
+extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 711; }
 extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = u8".\\D3D12\\"; }
 
 enum class RenderTargets : int
@@ -856,15 +856,16 @@ void Draw(Render* render)
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
 
-    XMMATRIX proj = XMMatrixPerspectiveFovRH(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
-	XMFLOAT3 eye(4.0f, 2.0f, 3.0f);
-	XMFLOAT3 at(0.0f, 0.0f, 0.0f);
-	XMFLOAT3 up(0.0f, 1.0f, 0.0f);
-    XMMATRIX view = XMMatrixLookAtRH(XMLoadFloat3(&eye), XMLoadFloat3(&at), XMLoadFloat3(&up));
-    XMMATRIX viewProj = XMMatrixTranspose(XMMatrixMultiply(view, proj));
-    XMMATRIX invViewProj = XMMatrixInverse(nullptr, viewProj);
-    XMStoreFloat4x4(&render->constantBufferData.ViewProjectionMatrix, viewProj);
-    XMStoreFloat4x4(&render->constantBufferData.InverseViewProjectionMatrix, invViewProj);
+    float4x4 proj = make_float4x4_perspective_field_of_view(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
+	float3 eye(4.0f, 2.0f, 3.0f);
+	float3 at(0.0f, 0.0f, 0.0f);
+	float3 up(0.0f, 1.0f, 0.0f);
+    float4x4 view = make_float4x4_look_at(eye, at, up);
+    float4x4 viewProj = view * proj;
+    float4x4 invViewProj;
+    invert(viewProj, &invViewProj);
+    render->constantBufferData.ViewProjectionMatrix = viewProj;
+    render->constantBufferData.InverseViewProjectionMatrix = invViewProj;
     render->constantBufferData.Counts.x = render->numInstances;
     render->constantBufferData.Counts.y = render->maxNumClusters;
     render->constantBufferData.Counts.z = 0;
