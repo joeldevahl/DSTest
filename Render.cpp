@@ -851,6 +851,56 @@ void Initialize(Render* render, HWND hwnd)
     render->scissorRect = CD3DX12_RECT(0, 0, render->width, render->height);
 }
 
+void ExtractPlanesD3D(plane* planes, const float4x4& comboMatrix, bool normalizePlanes)
+{
+    // Left clipping plane
+    planes[0].normal.x = comboMatrix.m14 + comboMatrix.m11;
+    planes[0].normal.y = comboMatrix.m24 + comboMatrix.m21;
+    planes[0].normal.z = comboMatrix.m34 + comboMatrix.m31;
+    planes[0].d        = comboMatrix.m44 + comboMatrix.m41;
+
+    // Right clipping plane
+    planes[1].normal.x = comboMatrix.m14 - comboMatrix.m11;
+    planes[1].normal.y = comboMatrix.m24 - comboMatrix.m21;
+    planes[1].normal.z = comboMatrix.m34 - comboMatrix.m31;
+    planes[1].d        = comboMatrix.m44 - comboMatrix.m41;
+
+    // Top clipping plane
+    planes[2].normal.x = comboMatrix.m14 - comboMatrix.m12;
+    planes[2].normal.y = comboMatrix.m24 - comboMatrix.m22;
+    planes[2].normal.z = comboMatrix.m34 - comboMatrix.m32;
+    planes[2].d        = comboMatrix.m44 - comboMatrix.m42;
+
+    // Bottom clipping plane
+    planes[3].normal.x = comboMatrix.m14 + comboMatrix.m12;
+    planes[3].normal.y = comboMatrix.m24 + comboMatrix.m22;
+    planes[3].normal.z = comboMatrix.m34 + comboMatrix.m32;
+    planes[3].d        = comboMatrix.m44 + comboMatrix.m42;
+
+    // Near clipping plane
+    planes[4].normal.x = comboMatrix.m13;
+    planes[4].normal.y = comboMatrix.m23;
+    planes[4].normal.z = comboMatrix.m33;
+    planes[4].d        = comboMatrix.m43;
+
+    // Far clipping plane
+    planes[5].normal.x = comboMatrix.m14 - comboMatrix.m13;
+    planes[5].normal.y = comboMatrix.m24 - comboMatrix.m23;
+    planes[5].normal.z = comboMatrix.m34 - comboMatrix.m33;
+    planes[5].d        = comboMatrix.m44 - comboMatrix.m43;
+
+    // Normalize the plane equations, if requested
+    if (normalizePlanes)
+    {
+        planes[0] = normalize(planes[0]);
+        planes[1] = normalize(planes[1]);
+        planes[2] = normalize(planes[2]);
+        planes[3] = normalize(planes[3]);
+        planes[4] = normalize(planes[4]);
+        planes[5] = normalize(planes[5]);
+    }
+}
+
 void Draw(Render* render)
 {
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
@@ -866,6 +916,7 @@ void Draw(Render* render)
     invert(viewProj, &invViewProj);
     render->constantBufferData.ViewProjectionMatrix = viewProj;
     render->constantBufferData.InverseViewProjectionMatrix = invViewProj;
+    ExtractPlanesD3D((plane*)render->constantBufferData.FrustumPlanes, viewProj, true);
     render->constantBufferData.Counts.x = render->numInstances;
     render->constantBufferData.Counts.y = render->maxNumClusters;
     render->constantBufferData.Counts.z = 0;
