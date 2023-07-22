@@ -5,6 +5,10 @@
 #include <dstorage.h>
 #include <winrt/base.h>
 
+#include "imgui.h"
+#include "imgui_impl_win32.h"
+#include "imgui_impl_dx12.h"
+
 using winrt::com_ptr;
 using winrt::check_hresult;
 
@@ -21,6 +25,7 @@ enum class RenderTargets : int
     BackBufferLast = BackBuffer2, // needs to be NUM_QUEUED_FRAMES - 1
 
     VBuffer,
+    ColorBuffer,
 
     RenderTargetCount,
 };
@@ -95,6 +100,7 @@ struct Render
     CD3DX12_CPU_DESCRIPTOR_HANDLE vBufferRTV;
 
     com_ptr<ID3D12Resource> colorBuffer;
+    CD3DX12_CPU_DESCRIPTOR_HANDLE colorBufferRTV;
 
     com_ptr<ID3D12Resource> depthStencil;
     CD3DX12_CPU_DESCRIPTOR_HANDLE depthStencilDSV;
@@ -334,6 +340,10 @@ Render* CreateRender(UINT width, UINT height)
 
 void Destroy(Render* render)
 {
+    ImGui_ImplDX12_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
+
 	delete render;
 }
 
@@ -475,7 +485,6 @@ void Initialize(Render* render, HWND hwnd)
             render->vBufferRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvBaseHandle, (int)RenderTargets::VBuffer, render->rtvDescriptorSize);
             render->device->CreateRenderTargetView(render->vBuffer.get(), nullptr, render->vBufferRTV);
 
-
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 			srvDesc.Format = DXGI_FORMAT_R32_UINT;
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -491,7 +500,7 @@ void Initialize(Render* render, HWND hwnd)
         {
             CD3DX12_HEAP_PROPERTIES heapType(D3D12_HEAP_TYPE_DEFAULT);
 
-            auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8G8B8A8_UNORM, render->width, render->height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8G8B8A8_UNORM, render->width, render->height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
 
 			check_hresult(render->device->CreateCommittedResource(
 				&heapType,
@@ -501,6 +510,9 @@ void Initialize(Render* render, HWND hwnd)
 				nullptr,
 				IID_PPV_ARGS(render->colorBuffer.put())
 			));
+
+            render->colorBufferRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvBaseHandle, (int)RenderTargets::ColorBuffer, render->rtvDescriptorSize);
+            render->device->CreateRenderTargetView(render->colorBuffer.get(), nullptr, render->colorBufferRTV);
 
             D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
             uavDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -849,6 +861,22 @@ void Initialize(Render* render, HWND hwnd)
 
     render->viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)render->width, (float)render->height);
     render->scissorRect = CD3DX12_RECT(0, 0, render->width, render->height);
+	
+	// Setup Dear ImGui context
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+	
+	// Setup Platform/Renderer backends
+	ImGui_ImplWin32_Init(hwnd);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), IMGUI_FONT_SRV, render->uniDescriptorSize);
+	CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(render->uniHeap->GetGPUDescriptorHandleForHeapStart(), IMGUI_FONT_SRV, render->uniDescriptorSize);
+	ImGui_ImplDX12_Init(render->device.get(), NUM_QUEUED_FRAMES,
+		DXGI_FORMAT_R8G8B8A8_UNORM, render->uniHeap.get(),
+		cpuHandle,
+		gpuHandle);
 }
 
 void ExtractPlanesD3D(plane* planes, const float4x4& comboMatrix, bool normalizePlanes)
@@ -905,6 +933,13 @@ void Draw(Render* render)
 {
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
+
+    ImGui::IsKeyPressed(ImGuiKey_Space);
+    double t = ImGui::GetTime();
+
+    ImGui_ImplDX12_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
 
     float4x4 proj = make_float4x4_perspective_field_of_view(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
 	float3 eye(4.0f, 2.0f, 3.0f);
@@ -995,7 +1030,21 @@ void Draw(Render* render)
 
     {
         D3D12_RESOURCE_BARRIER barriers[] = {
-            CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE),
+            CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RENDER_TARGET),
+        };
+        render->commandList->ResourceBarrier(_countof(barriers), barriers);
+    }
+
+    ImGui::Begin("Hello, world!");
+    ImGui::End();
+    ImGui::Render();
+
+    render->commandList->OMSetRenderTargets(1, &render->colorBufferRTV, FALSE, nullptr);
+    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), render->commandList.get());
+
+    {
+        D3D12_RESOURCE_BARRIER barriers[] = {
+            CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE),
             CD3DX12_RESOURCE_BARRIER::Transition(render->backBuffers[render->frameIndex].get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST),
         };
         render->commandList->ResourceBarrier(_countof(barriers), barriers);
