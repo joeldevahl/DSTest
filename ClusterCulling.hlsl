@@ -23,7 +23,7 @@ void main(uint dtid : SV_DispatchThreadID)
 	{
 		for (int i = 0; i < mesh.ClusterCount; ++i)
 		{
-			uint val = ((mesh.ClusterStart + i) & 0x0000ffff) | (instanceIndex << 16);
+			uint val = ((mesh.ClusterStart + i) & 0x0000ffff) | (dtid << 16);
 
 			visibleClusters.Store((offset + i) * 4, val);
 		}
