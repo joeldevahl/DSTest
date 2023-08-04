@@ -143,6 +143,12 @@ struct Render
 
     CD3DX12_VIEWPORT viewport;
     CD3DX12_RECT scissorRect;
+
+    float4x4 viewMat;
+    float4x4 projMat;
+    float pitch;
+    float yaw;
+    float3 pos;
 };
 
 struct handle_closer
@@ -877,6 +883,12 @@ void Initialize(Render* render, HWND hwnd)
 		DXGI_FORMAT_R8G8B8A8_UNORM, render->uniHeap.get(),
 		cpuHandle,
 		gpuHandle);
+
+    render->projMat = make_float4x4_perspective_field_of_view(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 100000.0f);
+    render->pitch = 0.0f;
+    render->yaw = 0.0f;
+    render->pos = float3(0.0f, 0.0f, 0.0f);
+    render->viewMat = make_float4x4_translation(render->pos);
 }
 
 void ExtractPlanesD3D(plane* planes, const float4x4& comboMatrix, bool normalizePlanes)
@@ -934,19 +946,61 @@ void Draw(Render* render)
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
 
-    ImGui::IsKeyPressed(ImGuiKey_Space);
-    double t = ImGui::GetTime();
-
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
+    
+    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+    {
+        static double start_time = ImGui::GetTime();
+        double time = ImGui::GetTime();
+        float dt = (float)(time - start_time);
+        float speed = 1.0f;
 
-    float4x4 proj = make_float4x4_perspective_field_of_view(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 1000.0f);
-	float3 eye(4.0f, 2.0f, 3.0f);
-	float3 at(0.0f, 0.0f, 0.0f);
-	float3 up(0.0f, 1.0f, 0.0f);
-    float4x4 view = make_float4x4_look_at(eye, at, up);
-    float4x4 viewProj = view * proj;
+        float dist = dt * speed;
+
+        ImVec2 delta = ImGui::GetMouseDragDelta();
+        render->pitch += delta.y * dist * 0.01f;
+        render->yaw += delta.x * dist * 0.01f;
+        // TODO: clamp
+        ImGui::ResetMouseDragDelta();
+
+        float4x4 rotMat = make_float4x4_rotation_y(render->yaw)
+            * make_float4x4_rotation_x(render->pitch);
+        float3 forward = float3(rotMat.m13, rotMat.m23, rotMat.m33);
+        float3 right = float3(rotMat.m11, rotMat.m21, rotMat.m31);
+
+        bool w_pressed = ImGui::IsKeyPressed(ImGuiKey_W);
+        bool a_pressed = ImGui::IsKeyPressed(ImGuiKey_A);
+        bool s_pressed = ImGui::IsKeyPressed(ImGuiKey_S);
+        bool d_pressed = ImGui::IsKeyPressed(ImGuiKey_D);
+
+        if (w_pressed)
+            render->pos += forward * dist;
+        if (a_pressed)
+            render->pos += right * dist;
+        if (s_pressed)
+            render->pos -= forward * dist;
+        if (d_pressed)
+            render->pos -= right * dist;
+    }
+
+    //render->viewMat = make_float4x4_translation(render->pos);
+    render->viewMat = make_float4x4_translation(render->pos)
+        * make_float4x4_rotation_y(render->yaw)
+        * make_float4x4_rotation_x(render->pitch);
+
+    //render->viewMat = render->viewMat
+        //* make_float4x4_rotation_y(rotation.x);
+     //   * make_float4x4_rotation_x(rotation.y);
+/*
+        
+        * make_float4x4_rotation_y(rotation.x)
+        * make_float4x4_rotation_x(rotation.y)
+        * ;
+        */
+
+    float4x4 viewProj = render->viewMat * render->projMat;
     float4x4 invViewProj;
     invert(viewProj, &invViewProj);
     render->constantBufferData.ViewProjectionMatrix = viewProj;
