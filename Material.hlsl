@@ -24,19 +24,16 @@ float3 Barycentric(float3 p, float3 a, float3 b, float3 c)
 }
 
 float3 ReprojectDepth(float depth, float2 uv) {
-	const float zFar = 1000.0;
-	const float zNear = 1.0;
-	depth = zNear / (zFar - depth * (zFar - zNear)) * zFar;
 	float4 ndc = float4(uv * 2.0f - 1.0f, depth, 1.0f);
 	ndc.y *= -1.0f;
-	float4 wp = mul(ndc, constants.InverseViewProjectionMatrix);
+	float4 wp = mul(constants.InverseProjectionMatrix, ndc);
 	return wp.xyz / wp.w;
 }
 
-float3 TransformVertex(float3 v, float4x4 ModelMatrix, float4x4 ViewProjectionMatrix)
+float3 TransformVertex(float3 v, float4x4 ModelMatrix, float4x4 ViewMatrix)
 {
-	float4 wv = mul(float4(v, 1.0f), ModelMatrix);
-	wv = mul(wv, ViewProjectionMatrix);
+	float4 wv = mul(ModelMatrix, float4(v, 1.0f));
+	wv = mul(ViewMatrix, wv);
 	return wv.xyz / wv.w;
 }
 
@@ -95,21 +92,21 @@ void main(uint2 dtid : SV_DispatchThreadID)
 	float3 v2 = GetPosition(cluster.VertexStart + tri.z);
 
 	float2 uv = dtid * float2(1.0f / 1280.0f, 1.0f / 720.0f);
-	float3 wp = ReprojectDepth(d, uv);
+	float3 vp = ReprojectDepth(d, uv);
 
-	float3 wv0 = TransformVertex(v0, instance.ModelMatrix, constants.ViewProjectionMatrix);
-	float3 wv1 = TransformVertex(v1, instance.ModelMatrix, constants.ViewProjectionMatrix);
-	float3 wv2 = TransformVertex(v2, instance.ModelMatrix, constants.ViewProjectionMatrix);
+	float3 vv0 = TransformVertex(v0, instance.ModelMatrix, constants.ViewMatrix);
+	float3 vv1 = TransformVertex(v1, instance.ModelMatrix, constants.ViewMatrix);
+	float3 vv2 = TransformVertex(v2, instance.ModelMatrix, constants.ViewMatrix);
 
-	float3 b = Barycentric(wp, wv0, wv1, wv2);
+	float3 b = Barycentric(vp, vv0, vv1, vv2);
 
 	float3 n0 = GetNormal(cluster.VertexStart + tri.x);
 	float3 n1 = GetNormal(cluster.VertexStart + tri.y);
-	float3 n2 = GetNormal(cluster.VertexStart + tri.x);
+	float3 n2 = GetNormal(cluster.VertexStart + tri.z);
 
 	float3 n = n0 * b.x + n1 * b.y + n2 * b.z;
 
-	float3 l = normalize(float3(10.0f, 10.0f, 0.0f) - v0);
+	float3 l = normalize(float3(10.0f, 10.0f, 10.0f));
 
 	float a = 0.5f + dot(n, l) * 0.5;
 

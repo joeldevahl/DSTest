@@ -12,6 +12,10 @@
 using winrt::com_ptr;
 using winrt::check_hresult;
 
+#define PI 3.14159265358979323846f
+#define PI_2 (PI * 2.0f)
+#define PI_HALF (PI * 0.5f)
+
 #define NUM_QUEUED_FRAMES 3
 
 extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 711; }
@@ -149,6 +153,8 @@ struct Render
     float pitch;
     float yaw;
     float3 pos;
+
+    double lastTime;
 };
 
 struct handle_closer
@@ -889,6 +895,7 @@ void Initialize(Render* render, HWND hwnd)
     render->yaw = 0.0f;
     render->pos = float3(0.0f, 0.0f, 0.0f);
     render->viewMat = make_float4x4_translation(render->pos);
+    render->lastTime = ImGui::GetTime();
 }
 
 void ExtractPlanesD3D(plane* planes, const float4x4& comboMatrix, bool normalizePlanes)
@@ -950,19 +957,24 @@ void Draw(Render* render)
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
     
-    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f))
     {
-        static double start_time = ImGui::GetTime();
         double time = ImGui::GetTime();
-        float dt = (float)(time - start_time);
-        float speed = 1.0f;
-
-        float dist = dt * speed;
+        float dt = (float)(time - render->lastTime);
+        float moveSpeed = 100.0f;
+        float lookSpeed = 0.3f;
+        render->lastTime = time;
+        
+        if (ImGui::IsKeyDown(ImGuiKey_LeftShift))
+            moveSpeed *= 10.0f;
 
         ImVec2 delta = ImGui::GetMouseDragDelta();
-        render->pitch += delta.y * dist * 0.01f;
-        render->yaw += delta.x * dist * 0.01f;
-        // TODO: clamp
+        render->pitch += delta.y * lookSpeed * dt;
+        render->yaw += delta.x * lookSpeed * dt;
+        while (render->yaw >= PI_2) render->yaw -= PI_2;
+        while (render->yaw < 0.0f) render->yaw += PI_2;
+        if (render->pitch < -PI_HALF) render->pitch = -PI_HALF;
+        if (render->pitch > PI_HALF) render->pitch = PI_HALF;
         ImGui::ResetMouseDragDelta();
 
         float4x4 rotMat = make_float4x4_rotation_y(render->yaw)
@@ -970,11 +982,12 @@ void Draw(Render* render)
         float3 forward = float3(rotMat.m13, rotMat.m23, rotMat.m33);
         float3 right = float3(rotMat.m11, rotMat.m21, rotMat.m31);
 
-        bool w_pressed = ImGui::IsKeyPressed(ImGuiKey_W);
-        bool a_pressed = ImGui::IsKeyPressed(ImGuiKey_A);
-        bool s_pressed = ImGui::IsKeyPressed(ImGuiKey_S);
-        bool d_pressed = ImGui::IsKeyPressed(ImGuiKey_D);
+        bool w_pressed = ImGui::IsKeyDown(ImGuiKey_W);
+        bool a_pressed = ImGui::IsKeyDown(ImGuiKey_A);
+        bool s_pressed = ImGui::IsKeyDown(ImGuiKey_S);
+        bool d_pressed = ImGui::IsKeyDown(ImGuiKey_D);
 
+        float dist = dt * moveSpeed;
         if (w_pressed)
             render->pos += forward * dist;
         if (a_pressed)
@@ -985,25 +998,18 @@ void Draw(Render* render)
             render->pos -= right * dist;
     }
 
-    //render->viewMat = make_float4x4_translation(render->pos);
     render->viewMat = make_float4x4_translation(render->pos)
         * make_float4x4_rotation_y(render->yaw)
         * make_float4x4_rotation_x(render->pitch);
 
-    //render->viewMat = render->viewMat
-        //* make_float4x4_rotation_y(rotation.x);
-     //   * make_float4x4_rotation_x(rotation.y);
-/*
-        
-        * make_float4x4_rotation_y(rotation.x)
-        * make_float4x4_rotation_x(rotation.y)
-        * ;
-        */
-
     float4x4 viewProj = render->viewMat * render->projMat;
     float4x4 invViewProj;
     invert(viewProj, &invViewProj);
+    float4x4 invProj;
+    invert(render->projMat, &invProj);
+    render->constantBufferData.ViewMatrix = render->viewMat;
     render->constantBufferData.ViewProjectionMatrix = viewProj;
+    render->constantBufferData.InverseProjectionMatrix = invProj;
     render->constantBufferData.InverseViewProjectionMatrix = invViewProj;
     ExtractPlanesD3D((plane*)render->constantBufferData.FrustumPlanes, viewProj, true);
     render->constantBufferData.Counts.x = render->numInstances;
@@ -1090,6 +1096,8 @@ void Draw(Render* render)
     }
 
     ImGui::Begin("Hello, world!");
+    ImGui::Text("Translation: (%f, %f, %f)", render->pos.x, render->pos.y, render->pos.z);
+    ImGui::Text("Pitch: %f Yaw: %f", render->pitch, render->yaw);
     ImGui::End();
     ImGui::Render();
 

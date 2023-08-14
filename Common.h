@@ -40,7 +40,9 @@ struct CenterExtentsAABB
 
 CB_ALIGN struct Constants
 {
+    float4x4 ViewMatrix;
     float4x4 ViewProjectionMatrix;
+    float4x4 InverseProjectionMatrix;
     float4x4 InverseViewProjectionMatrix;
     float4 FrustumPlanes[6];
     uint4 Counts;
