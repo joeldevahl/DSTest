@@ -129,6 +129,8 @@ struct Render
     Buffer visibleInstancesCounter;
     Buffer visibleClustersCounter;
 
+    Buffer readbackBuffer;
+
     com_ptr<ID3D12RootSignature> drawRootSignature;
     com_ptr<ID3D12PipelineState> drawMeshPSO;
 
@@ -701,6 +703,11 @@ void Initialize(Render* render, HWND hwnd)
         .WithUAV(VISIBLE_CLUSTERS_COUNTER_UAV)
         .WithRAW());
 
+    CreateBuffer(render, &render->readbackBuffer,
+        BufferDesc((1 + 3) * NUM_QUEUED_FRAMES, sizeof(UINT))
+        .WithName(L"ReadBackBuffer")
+        .WithHeapType(D3D12_HEAP_TYPE_READBACK));
+
     /*
      * Root Signature
      */
@@ -890,7 +897,7 @@ void Initialize(Render* render, HWND hwnd)
 		cpuHandle,
 		gpuHandle);
 
-    render->projMat = make_float4x4_perspective_field_of_view(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 100000.0f);
+    render->projMat = make_float4x4_perspective_field_of_view(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 10000.0f);
     render->pitch = 0.0f;
     render->yaw = 0.0f;
     render->pos = float3(0.0f, 0.0f, 0.0f);
@@ -952,6 +959,16 @@ void Draw(Render* render)
 {
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
+
+    D3D12_RANGE readbackBufferRange{
+        (1 + 3) * sizeof(UINT) * render->frameIndex,
+        (1 + 3) * sizeof(UINT) * (render->frameIndex + 1),
+    };
+    UINT* readbackPtr;
+    render->readbackBuffer.resource->Map(0, &readbackBufferRange, (void**)&readbackPtr);
+    UINT numInstancesPassedCulling = readbackPtr[0];
+    UINT numClustersPassedCulling = readbackPtr[1];
+    render->readbackBuffer.resource->Unmap(0, nullptr);
 
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -1098,6 +1115,8 @@ void Draw(Render* render)
     ImGui::Begin("Hello, world!");
     ImGui::Text("Translation: (%f, %f, %f)", render->pos.x, render->pos.y, render->pos.z);
     ImGui::Text("Pitch: %f Yaw: %f", render->pitch, render->yaw);
+    ImGui::Text("Instances: %d", numInstancesPassedCulling);
+    ImGui::Text("Clusters: %d", numClustersPassedCulling);
     ImGui::End();
     ImGui::Render();
 
@@ -1114,6 +1133,11 @@ void Draw(Render* render)
 
     // color buffer to back buffer
     render->commandList->CopyResource(render->backBuffers[render->frameIndex].get(), render->colorBuffer.get());
+
+    render->commandList->CopyBufferRegion(render->readbackBuffer.resource.get(), ((1 + 3) * render->frameIndex + 0) * sizeof(UINT),
+        render->visibleInstancesCounter.resource.get(), 0, 1 * sizeof(UINT));
+    render->commandList->CopyBufferRegion(render->readbackBuffer.resource.get(), ((1 + 3) * render->frameIndex + 1) * sizeof(UINT),
+        render->visibleClustersCounter.resource.get(), 0, 3 * sizeof(UINT));
 
     {
         D3D12_RESOURCE_BARRIER barriers[] = {

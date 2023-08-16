@@ -17,7 +17,45 @@ static void OutputDataToFile(LPCWSTR filename, const std::vector<T>& arr)
 	CloseHandle(file);
 }
 
-static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instances, cgltf_node* node)
+inline float3 abs(float3 const& val)
+{
+	return float3(fabs(val.x), fabs(val.y), fabs(val.z));
+}
+    
+static CenterExtentsAABB TransformAABB(const CenterExtentsAABB& in, const float4x4& mat)
+{
+	float3 p0 = in.Center + (in.Extents * float3(-1.0f, -1.0f, -1.0f));
+	float3 p1 = in.Center + (in.Extents * float3( 1.0f, -1.0f, -1.0f));
+	float3 p2 = in.Center + (in.Extents * float3(-1.0f,  1.0f, -1.0f));
+	float3 p3 = in.Center + (in.Extents * float3( 1.0f,  1.0f, -1.0f));
+	float3 p4 = in.Center + (in.Extents * float3(-1.0f, -1.0f,  1.0f));
+	float3 p5 = in.Center + (in.Extents * float3( 1.0f, -1.0f,  1.0f));
+	float3 p6 = in.Center + (in.Extents * float3(-1.0f,  1.0f,  1.0f));
+	float3 p7 = in.Center + (in.Extents * float3( 1.0f,  1.0f,  1.0f));
+
+	float3 tp0 = transform(p0, mat);
+	float3 tp1 = transform(p1, mat);
+	float3 tp2 = transform(p2, mat);
+	float3 tp3 = transform(p3, mat);
+	float3 tp4 = transform(p4, mat);
+	float3 tp5 = transform(p5, mat);
+	float3 tp6 = transform(p6, mat);
+	float3 tp7 = transform(p7, mat);
+
+	float3 ext = float3(FLT_MAX);
+	ext = min(abs(tp0 - in.Center), ext);
+	ext = min(abs(tp1 - in.Center), ext);
+	ext = min(abs(tp2 - in.Center), ext);
+	ext = min(abs(tp3 - in.Center), ext);
+	ext = min(abs(tp4 - in.Center), ext);
+	ext = min(abs(tp5 - in.Center), ext);
+	ext = min(abs(tp6 - in.Center), ext);
+	ext = min(abs(tp7 - in.Center), ext);
+
+	return CenterExtentsAABB{ in.Center, ext};
+}
+
+static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instances, const std::vector<Mesh>& meshes, cgltf_node* node)
 {
 	if (node->mesh != nullptr)
 	{
@@ -46,11 +84,12 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 
 			modelMat = scaleMat * rotationMat * translationMat;
 		}
-		instances.push_back(Instance{ modelMat, meshID, 0 });
+		CenterExtentsAABB bounds = TransformAABB(meshes[meshID].Bounds, modelMat);
+		instances.push_back(Instance{ modelMat, meshID, 0, bounds});
 	}
 		
 	for (int c = 0; c < node->children_count; ++c)
-		ConvertNodeHierarchy(data, instances, node->children[c]);
+		ConvertNodeHierarchy(data, instances, meshes, node->children[c]);
 }
 
 void Generate(const char* filename, const char* filenameBin)
@@ -266,7 +305,7 @@ void Generate(const char* filename, const char* filenameBin)
 	assert(data->scene != nullptr);
 
 	for (int n = 0; n < data->scene->nodes_count; ++n)
-		ConvertNodeHierarchy(data, out_instances, data->scene->nodes[n]);
+		ConvertNodeHierarchy(data, out_instances, out_meshes, data->scene->nodes[n]);
 
 	OutputDataToFile(L"positions.raw", out_positions);
 	OutputDataToFile(L"normals.raw", out_normals);
