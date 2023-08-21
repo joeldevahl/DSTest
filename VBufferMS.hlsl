@@ -44,6 +44,6 @@ void main(
 
 		float4 transformedVert = mul(instance.ModelMatrix, float4(vert, 1.0));
 
-		verts[gtid].Position = mul(constants.ViewProjectionMatrix, transformedVert);
+		verts[gtid].Position = mul(constants.DrawingCamera.ViewProjectionMatrix, transformedVert);
 	}
 }

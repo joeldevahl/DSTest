@@ -25,7 +25,6 @@
 
 #define MAX_ELEMENTS 65535
 
-
 struct MinMaxAABB
 {
     float3 Min;
@@ -38,13 +37,25 @@ struct CenterExtentsAABB
     float3 Extents; // half extents
 };
 
-CB_ALIGN struct Constants
+struct Sphere
+{
+    float3 Center;
+    float Radius;
+};
+
+struct Camera
 {
     float4x4 ViewMatrix;
     float4x4 ViewProjectionMatrix;
     float4x4 InverseProjectionMatrix;
     float4x4 InverseViewProjectionMatrix;
     float4 FrustumPlanes[6];
+};
+
+CB_ALIGN struct Constants
+{
+    Camera CullingCamera;
+    Camera DrawingCamera;
     uint4 Counts;
 };
 
@@ -54,7 +65,8 @@ struct Instance
     uint MeshIndex;
     uint MaterialIndex;
 
-    CenterExtentsAABB Bounds;
+    Sphere Bounds;
+    CenterExtentsAABB Box;
 };
 
 struct Mesh
@@ -62,7 +74,9 @@ struct Mesh
     uint ClusterStart;
     uint ClusterCount;
 
-    CenterExtentsAABB Bounds;
+    // TODO: these do not need to be uploaded to GPU
+    Sphere Bounds;
+    CenterExtentsAABB Box;
 };
 
 struct Cluster
@@ -72,7 +86,8 @@ struct Cluster
     uint VertexStart;
     uint VertexCount;
 
-    CenterExtentsAABB Bounds;
+    Sphere Bounds;
+    CenterExtentsAABB Box; // TODO: OOBB?
 };
 
 struct Material

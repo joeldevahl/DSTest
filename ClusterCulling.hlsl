@@ -16,16 +16,20 @@ void main(uint dtid : SV_DispatchThreadID)
 	Mesh mesh = GetMesh(instance.MeshIndex);
 
 	RWByteAddressBuffer visibleClustersCounter = ResourceDescriptorHeap[VISIBLE_CLUSTERS_COUNTER_UAV];
-	uint offset = 0;
-	visibleClustersCounter.InterlockedAdd(0, mesh.ClusterCount, offset); // TODO: restructure this dispatch to do one instance per wave
-
-	if (offset + mesh.ClusterCount < MAX_ELEMENTS)
+	for (int i = 0; i < mesh.ClusterCount; ++i)
 	{
-		for (int i = 0; i < mesh.ClusterCount; ++i)
+		Cluster cluster = GetCluster(mesh.ClusterStart + i);
+
+		if (IsCulled(cluster.Bounds))
+			continue;
+
+		uint offset = 0;
+		visibleClustersCounter.InterlockedAdd(0, 1, offset); // TODO: restructure this dispatch to do one instance per wave
+
+		if (offset + mesh.ClusterCount < MAX_ELEMENTS)
 		{
 			uint val = ((mesh.ClusterStart + i) & 0x0000ffff) | (dtid << 16);
-
-			visibleClusters.Store((offset + i) * 4, val);
+			visibleClusters.Store(offset * 4, val);
 		}
 	}
 }

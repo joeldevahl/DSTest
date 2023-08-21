@@ -60,7 +60,7 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 	if (node->mesh != nullptr)
 	{
 		UINT meshID = node->mesh - data->meshes;
-		float4x4 modelMat = float4x4::identity();
+
 		if (node->has_matrix)
 		{
 			// We don't handle this for now
@@ -71,6 +71,7 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 			float3 scale(1.0f, 1.0f, 1.0f);
 			quaternion rotation(0.0f, 0.0f, 0.0f, 1.0f);
 			float3 translation(0.0f, 0.0f, 0.0f);
+
 			if (node->has_scale)
 				scale = float3(node->scale[0], node->scale[1], node->scale[2]);
 			if (node->has_rotation)
@@ -82,14 +83,31 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 			float4x4 rotationMat = make_float4x4_from_quaternion(rotation);
 			float4x4 translationMat = make_float4x4_translation(translation);
 
-			modelMat = scaleMat * rotationMat * translationMat;
+			float4x4 modelMat = scaleMat * rotationMat * translationMat;
+
+
+			float maxScale = scale.x > scale.y ? scale.x : scale.y;
+			maxScale = maxScale > scale.z ? maxScale : scale.z;
+			Sphere bounds = Sphere{
+				meshes[meshID].Bounds.Center + translation,
+				meshes[meshID].Bounds.Radius * maxScale,
+			};
+			instances.push_back(Instance{ modelMat, meshID, 0, bounds, TransformAABB(meshes[meshID].Box, modelMat)});
 		}
-		CenterExtentsAABB bounds = TransformAABB(meshes[meshID].Bounds, modelMat);
-		instances.push_back(Instance{ modelMat, meshID, 0, bounds});
 	}
 		
 	for (int c = 0; c < node->children_count; ++c)
 		ConvertNodeHierarchy(data, instances, meshes, node->children[c]);
+}
+
+static Sphere MinMaxToSphere(MinMaxAABB& aabb)
+{
+	float3 c = (aabb.Min + aabb.Max) * 0.5f;
+	float3 e = c - aabb.Min;
+	return Sphere{
+		c,
+		length(e), // TODO: ???
+	};
 }
 
 void Generate(const char* filename, const char* filenameBin)
@@ -286,7 +304,8 @@ void Generate(const char* filename, const char* filenameBin)
 					meshlet.triangle_count,
 					outputVerticesOffset,
 					meshlet.vertex_count,
-					MinMaxToCenterExtents(clusterBounds)
+					MinMaxToSphere(clusterBounds),
+					MinMaxToCenterExtents(clusterBounds),
 				});
 
 				meshBounds.Min = min(meshBounds.Min, clusterBounds.Min);
@@ -297,7 +316,9 @@ void Generate(const char* filename, const char* filenameBin)
 		out_meshes.push_back(Mesh{
 			cluster_start,
 			(UINT)out_clusters.size() - cluster_start,
-			MinMaxToCenterExtents(meshBounds)});
+			MinMaxToSphere(meshBounds),
+			MinMaxToCenterExtents(meshBounds),
+		});
 	}
 
 	out_materials.push_back(Material{ {1.0f, 1.0f, 0.0f, 1.0f} });

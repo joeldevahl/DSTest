@@ -26,7 +26,7 @@ float3 Barycentric(float3 p, float3 a, float3 b, float3 c)
 float3 ReprojectDepth(float depth, float2 uv) {
 	float4 ndc = float4(uv * 2.0f - 1.0f, depth, 1.0f);
 	ndc.y *= -1.0f;
-	float4 wp = mul(constants.InverseProjectionMatrix, ndc);
+	float4 wp = mul(constants.DrawingCamera.InverseProjectionMatrix, ndc);
 	return wp.xyz / wp.w;
 }
 
@@ -94,9 +94,9 @@ void main(uint2 dtid : SV_DispatchThreadID)
 	float2 uv = dtid * float2(1.0f / 1280.0f, 1.0f / 720.0f);
 	float3 vp = ReprojectDepth(d, uv);
 
-	float3 vv0 = TransformVertex(v0, instance.ModelMatrix, constants.ViewMatrix);
-	float3 vv1 = TransformVertex(v1, instance.ModelMatrix, constants.ViewMatrix);
-	float3 vv2 = TransformVertex(v2, instance.ModelMatrix, constants.ViewMatrix);
+	float3 vv0 = TransformVertex(v0, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
+	float3 vv1 = TransformVertex(v1, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
+	float3 vv2 = TransformVertex(v2, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
 
 	float3 b = Barycentric(vp, vv0, vv1, vv2);
 

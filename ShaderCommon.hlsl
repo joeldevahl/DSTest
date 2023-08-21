@@ -29,3 +29,21 @@ float4 GetTangent(uint idx) { return asfloat(GetTangentDataBuffer().Load4(idx * 
 float2 GetTexcoord(uint idx) { return asfloat(GetTexcoordDataBuffer().Load2(idx * 8)); }
 uint3 GetTri(uint idx) { return GetIndexDataBuffer().Load3(idx * 12); }
 Material GetMaterial(uint idx) { return GetMaterialBuffer()[idx]; }
+
+bool IsSphereOutsidePlane(Sphere s, float4 p)
+{
+	float d = dot(p.xyz, s.Center) + p.w;
+	return d < -s.Radius;
+}
+
+bool IsCulled(Sphere s)
+{
+	bool t0 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[0]);
+	bool t1 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[1]);
+	bool t2 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[2]);
+	bool t3 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[3]);
+	bool t4 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[4]);
+	bool t5 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[5]);
+
+	return t0 | t1 | t2 | t3 | t4 | t5;
+}

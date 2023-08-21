@@ -110,6 +110,7 @@ struct Render
     CD3DX12_CPU_DESCRIPTOR_HANDLE depthStencilDSV;
 
     UINT numInstances;
+    UINT numClusters;
     UINT maxNumClusters;
     Constants constantBufferData;
     Buffer constantBuffer;
@@ -150,11 +151,14 @@ struct Render
     CD3DX12_VIEWPORT viewport;
     CD3DX12_RECT scissorRect;
 
-    float4x4 viewMat;
-    float4x4 projMat;
-    float pitch;
-    float yaw;
-    float3 pos;
+    struct
+    {
+        float4x4 viewMat;
+        float4x4 projMat;
+        float pitch;
+        float yaw;
+        float3 pos;
+    } cullingCamera, drawingCamera;
 
     double lastTime;
 };
@@ -628,9 +632,11 @@ void Initialize(Render* render, HWND hwnd)
 	OpenFileForGPU(render, L"indices.raw", indicesFile, indicesSize);
 	OpenFileForGPU(render, L"materials.raw", materialsFile, materialsSize);
     render->numInstances = instancesSize / sizeof(Instance);
+    render->numClusters = clustersSize / sizeof(Cluster);
     render->maxNumClusters = MAX_ELEMENTS;
 
     assert(render->numInstances <= MAX_ELEMENTS);
+    assert(render->numClusters <= MAX_ELEMENTS);
 
     /*
      * Mesh and Instance Pool
@@ -897,11 +903,13 @@ void Initialize(Render* render, HWND hwnd)
 		cpuHandle,
 		gpuHandle);
 
-    render->projMat = make_float4x4_perspective_field_of_view(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 10000.0f);
-    render->pitch = 0.0f;
-    render->yaw = 0.0f;
-    render->pos = float3(0.0f, 0.0f, 0.0f);
-    render->viewMat = make_float4x4_translation(render->pos);
+
+    render->cullingCamera.projMat = make_float4x4_perspective_field_of_view(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 10000.0f);
+    render->cullingCamera.pitch = 0.0f;
+    render->cullingCamera.yaw = 0.0f;
+    render->cullingCamera.pos = float3(0.0f, 0.0f, 0.0f);
+    render->cullingCamera.viewMat = make_float4x4_translation(render->cullingCamera.pos);
+    render->drawingCamera = render->cullingCamera;
     render->lastTime = ImGui::GetTime();
 }
 
@@ -986,16 +994,16 @@ void Draw(Render* render)
             moveSpeed *= 10.0f;
 
         ImVec2 delta = ImGui::GetMouseDragDelta();
-        render->pitch += delta.y * lookSpeed * dt;
-        render->yaw += delta.x * lookSpeed * dt;
-        while (render->yaw >= PI_2) render->yaw -= PI_2;
-        while (render->yaw < 0.0f) render->yaw += PI_2;
-        if (render->pitch < -PI_HALF) render->pitch = -PI_HALF;
-        if (render->pitch > PI_HALF) render->pitch = PI_HALF;
+        render->cullingCamera.pitch += delta.y * lookSpeed * dt;
+        render->cullingCamera.yaw += delta.x * lookSpeed * dt;
+        while (render->cullingCamera.yaw >= PI_2) render->cullingCamera.yaw -= PI_2;
+        while (render->cullingCamera.yaw < 0.0f) render->cullingCamera.yaw += PI_2;
+        if (render->cullingCamera.pitch < -PI_HALF) render->cullingCamera.pitch = -PI_HALF;
+        if (render->cullingCamera.pitch > PI_HALF) render->cullingCamera.pitch = PI_HALF;
         ImGui::ResetMouseDragDelta();
 
-        float4x4 rotMat = make_float4x4_rotation_y(render->yaw)
-            * make_float4x4_rotation_x(render->pitch);
+        float4x4 rotMat = make_float4x4_rotation_y(render->cullingCamera.yaw)
+            * make_float4x4_rotation_x(render->cullingCamera.pitch);
         float3 forward = float3(rotMat.m13, rotMat.m23, rotMat.m33);
         float3 right = float3(rotMat.m11, rotMat.m21, rotMat.m31);
 
@@ -1006,29 +1014,49 @@ void Draw(Render* render)
 
         float dist = dt * moveSpeed;
         if (w_pressed)
-            render->pos += forward * dist;
+            render->cullingCamera.pos += forward * dist;
         if (a_pressed)
-            render->pos += right * dist;
+            render->cullingCamera.pos += right * dist;
         if (s_pressed)
-            render->pos -= forward * dist;
+            render->cullingCamera.pos -= forward * dist;
         if (d_pressed)
-            render->pos -= right * dist;
+            render->cullingCamera.pos -= right * dist;
     }
 
-    render->viewMat = make_float4x4_translation(render->pos)
-        * make_float4x4_rotation_y(render->yaw)
-        * make_float4x4_rotation_x(render->pitch);
+    render->cullingCamera.viewMat = make_float4x4_translation(render->cullingCamera.pos)
+        * make_float4x4_rotation_y(render->cullingCamera.yaw)
+        * make_float4x4_rotation_x(render->cullingCamera.pitch);
 
-    float4x4 viewProj = render->viewMat * render->projMat;
-    float4x4 invViewProj;
-    invert(viewProj, &invViewProj);
-    float4x4 invProj;
-    invert(render->projMat, &invProj);
-    render->constantBufferData.ViewMatrix = render->viewMat;
-    render->constantBufferData.ViewProjectionMatrix = viewProj;
-    render->constantBufferData.InverseProjectionMatrix = invProj;
-    render->constantBufferData.InverseViewProjectionMatrix = invViewProj;
-    ExtractPlanesD3D((plane*)render->constantBufferData.FrustumPlanes, viewProj, true);
+    render->drawingCamera = render->cullingCamera;
+
+    {
+        float4x4 viewProj = render->cullingCamera.viewMat * render->cullingCamera.projMat;
+        float4x4 invViewProj;
+        invert(viewProj, &invViewProj);
+        float4x4 invProj;
+        invert(render->cullingCamera.projMat, &invProj);
+
+        render->constantBufferData.CullingCamera.ViewMatrix = render->cullingCamera.viewMat;
+        render->constantBufferData.CullingCamera.ViewProjectionMatrix = viewProj;
+        render->constantBufferData.CullingCamera.InverseProjectionMatrix = invProj;
+        render->constantBufferData.CullingCamera.InverseViewProjectionMatrix = invViewProj;
+        ExtractPlanesD3D((plane*)render->constantBufferData.CullingCamera.FrustumPlanes, viewProj, true);
+    }
+
+    {
+        float4x4 viewProj = render->drawingCamera.viewMat * render->drawingCamera.projMat;
+        float4x4 invViewProj;
+        invert(viewProj, &invViewProj);
+        float4x4 invProj;
+        invert(render->drawingCamera.projMat, &invProj);
+
+        render->constantBufferData.DrawingCamera.ViewMatrix = render->drawingCamera.viewMat;
+        render->constantBufferData.DrawingCamera.ViewProjectionMatrix = viewProj;
+        render->constantBufferData.DrawingCamera.InverseProjectionMatrix = invProj;
+        render->constantBufferData.DrawingCamera.InverseViewProjectionMatrix = invViewProj;
+        ExtractPlanesD3D((plane*)render->constantBufferData.DrawingCamera.FrustumPlanes, viewProj, true);
+    }
+
     render->constantBufferData.Counts.x = render->numInstances;
     render->constantBufferData.Counts.y = render->maxNumClusters;
     render->constantBufferData.Counts.z = 0;
@@ -1112,11 +1140,11 @@ void Draw(Render* render)
         render->commandList->ResourceBarrier(_countof(barriers), barriers);
     }
 
-    ImGui::Begin("Hello, world!");
-    ImGui::Text("Translation: (%f, %f, %f)", render->pos.x, render->pos.y, render->pos.z);
-    ImGui::Text("Pitch: %f Yaw: %f", render->pitch, render->yaw);
-    ImGui::Text("Instances: %d", numInstancesPassedCulling);
-    ImGui::Text("Clusters: %d", numClustersPassedCulling);
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+    ImGui::Begin("Hello, world!", nullptr, windowFlags);
+    ImGui::Text("Instances: %d (of %d)", numInstancesPassedCulling, render->numInstances);
+    ImGui::Text("Clusters: %d (of %d)", numClustersPassedCulling, render->numClusters);
     ImGui::End();
     ImGui::Render();
 

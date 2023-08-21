@@ -6,6 +6,11 @@ void main(uint dtid : SV_DispatchThreadID)
 	if (dtid >= constants.Counts.x)
 		return;
 
+	Instance instance = GetInstance(dtid);
+
+	if (IsCulled(instance.Bounds))
+		return;
+
 	RWByteAddressBuffer visibleInstancesCounter = ResourceDescriptorHeap[VISIBLE_INSTANCES_COUNTER_UAV];
 	uint offset = 0;
 	visibleInstancesCounter.InterlockedAdd(0, 1, offset); // TODO: restructure this dispatch to do one instance per wave
