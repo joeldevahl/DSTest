@@ -76,6 +76,102 @@ struct Buffer
     com_ptr<ID3D12Resource> resource;
 };
 
+struct WireContainer
+{
+    Buffer vertexBuffer;
+    float3* vertexPtr;
+    UINT maxVertices;
+    UINT numVertices;
+
+    void AddWireUnchecked(float3 p0, float3 p1)
+    {
+        vertexPtr[numVertices + 0] = p0;
+        vertexPtr[numVertices + 1] = p1;
+
+        numVertices += 2;
+    }
+
+    void AddWire(float3 p0, float3 p1)
+    {
+        if (numVertices + 2 > maxVertices)
+            return;
+
+        AddWireUnchecked(p0, p1);
+    }
+
+    void AddAABB(CenterExtentsAABB& aabb)
+    {
+        if (numVertices + 24 > maxVertices)
+            return;
+
+        float3 p0 = aabb.Center + float3(-aabb.Extents.x, -aabb.Extents.y, -aabb.Extents.z);
+        float3 p1 = aabb.Center + float3( aabb.Extents.x, -aabb.Extents.y, -aabb.Extents.z);
+        float3 p2 = aabb.Center + float3(-aabb.Extents.x,  aabb.Extents.y, -aabb.Extents.z);
+        float3 p3 = aabb.Center + float3( aabb.Extents.x,  aabb.Extents.y, -aabb.Extents.z);
+
+        float3 p4 = aabb.Center + float3(-aabb.Extents.x, -aabb.Extents.y,  aabb.Extents.z);
+        float3 p5 = aabb.Center + float3( aabb.Extents.x, -aabb.Extents.y,  aabb.Extents.z);
+        float3 p6 = aabb.Center + float3(-aabb.Extents.x,  aabb.Extents.y,  aabb.Extents.z);
+        float3 p7 = aabb.Center + float3( aabb.Extents.x,  aabb.Extents.y,  aabb.Extents.z);
+
+		AddWireUnchecked(p0, p1);
+		AddWireUnchecked(p2, p3);
+		AddWireUnchecked(p0, p2);
+		AddWireUnchecked(p1, p3);
+
+		AddWireUnchecked(p4, p5);
+		AddWireUnchecked(p6, p7);
+		AddWireUnchecked(p4, p6);
+		AddWireUnchecked(p5, p7);
+
+		AddWireUnchecked(p0, p4);
+		AddWireUnchecked(p1, p5);
+		AddWireUnchecked(p2, p6);
+		AddWireUnchecked(p3, p7);
+    }
+
+    void AddFrustum(float4x4& mat)
+	{
+        if (numVertices + 24 > maxVertices)
+            return;
+
+		float4 p0nt = transform(float4(-1.0f, -1.0f, 0.0f, 1.0f), mat);
+		float4 p1nt = transform(float4(1.0f, -1.0f, 0.0f, 1.0f), mat);
+		float4 p2nt = transform(float4(-1.0f, 1.0f, 0.0f, 1.0f), mat);
+		float4 p3nt = transform(float4(1.0f, 1.0f, 0.0f, 1.0f), mat);
+
+		float4 p0ft = transform(float4(-1.0f, -1.0f, 0.9f, 1.0f), mat);
+		float4 p1ft = transform(float4(1.0f, -1.0f, 0.9f, 1.0f), mat);
+		float4 p2ft = transform(float4(-1.0f, 1.0f, 0.9f, 1.0f), mat);
+		float4 p3ft = transform(float4(1.0f, 1.0f, 0.9f, 1.0f), mat);
+
+		float3 p0n = float3(p0nt.x, p0nt.y, p0nt.z) / p0nt.w;
+		float3 p1n = float3(p1nt.x, p1nt.y, p1nt.z) / p1nt.w;
+		float3 p2n = float3(p2nt.x, p2nt.y, p2nt.z) / p2nt.w;
+		float3 p3n = float3(p3nt.x, p3nt.y, p3nt.z) / p3nt.w;
+
+		float3 p0f = float3(p0ft.x, p0ft.y, p0ft.z) / p0ft.w;
+		float3 p1f = float3(p1ft.x, p1ft.y, p1ft.z) / p1ft.w;
+		float3 p2f = float3(p2ft.x, p2ft.y, p2ft.z) / p2ft.w;
+		float3 p3f = float3(p3ft.x, p3ft.y, p3ft.z) / p3ft.w;
+
+		AddWireUnchecked(p0n, p1n);
+		AddWireUnchecked(p2n, p3n);
+		AddWireUnchecked(p0n, p2n);
+		AddWireUnchecked(p1n, p3n);
+
+		AddWireUnchecked(p0f, p1f);
+		AddWireUnchecked(p2f, p3f);
+		AddWireUnchecked(p0f, p2f);
+		AddWireUnchecked(p1f, p3f);
+
+		AddWireUnchecked(p0n, p0f);
+		AddWireUnchecked(p1n, p1f);
+		AddWireUnchecked(p2n, p2f);
+		AddWireUnchecked(p3n, p3f);
+	}
+};
+
 struct Render
 {
     UINT width = 1280;
@@ -125,6 +221,8 @@ struct Render
     Buffer materialsBuffer;
     char* cbvDataBegin;
 
+    Instance* instancesCpu;
+
     Buffer visibleInstances;
     Buffer visibleClusters;
     Buffer visibleInstancesCounter;
@@ -133,7 +231,9 @@ struct Render
     Buffer readbackBuffer;
 
     com_ptr<ID3D12RootSignature> drawRootSignature;
+    com_ptr<ID3D12RootSignature> drawWireRootSignature;
     com_ptr<ID3D12PipelineState> drawMeshPSO;
+    com_ptr<ID3D12PipelineState> drawWirePSO;
 
     com_ptr<ID3D12PipelineState> frameSetupPSO;
     com_ptr<ID3D12PipelineState> instanceCullingPSO;
@@ -151,7 +251,7 @@ struct Render
     CD3DX12_VIEWPORT viewport;
     CD3DX12_RECT scissorRect;
 
-    struct
+    struct Camera
     {
         float4x4 viewMat;
         float4x4 projMat;
@@ -161,6 +261,8 @@ struct Render
     } cullingCamera, drawingCamera;
 
     double lastTime;
+
+    WireContainer wireContainer[NUM_QUEUED_FRAMES];
 };
 
 struct handle_closer
@@ -315,7 +417,7 @@ static void CreateBuffer(Render* render, Buffer* out_buffer, const BufferDesc& d
     }
 }
 
-static void OpenFileForGPU(Render* render, LPCWSTR fileName, com_ptr<IDStorageFile>& file, UINT32& size)
+static void OpenFileForLoading(Render* render, LPCWSTR fileName, com_ptr<IDStorageFile>& file, UINT32& size)
 {
 	check_hresult(render->storageFactory->OpenFile(fileName, IID_PPV_ARGS(file.put())));
 
@@ -341,6 +443,22 @@ static void LoadFileToGPU(Render* render, const com_ptr<IDStorageFile>& file, ID
 	render->storageQueue->EnqueueRequest(&request);
 }
 
+static void LoadFileToCPU(Render* render, const com_ptr<IDStorageFile>& file, void* buffer, UINT32 size)
+{
+	DSTORAGE_REQUEST request = {};
+	request.Options.SourceType = DSTORAGE_REQUEST_SOURCE_FILE;
+	request.Options.DestinationType = DSTORAGE_REQUEST_DESTINATION_MEMORY;
+    request.Options.CompressionFormat = DSTORAGE_COMPRESSION_FORMAT_NONE;
+	request.Source.File.Source = file.get();
+	request.Source.File.Offset = 0;
+	request.Source.File.Size = size;
+	request.UncompressedSize = size;
+    request.Destination.Memory.Buffer = buffer;
+	request.Destination.Memory.Size = size;
+
+	render->storageQueue->EnqueueRequest(&request);
+}
+
 Render* CreateRender(UINT width, UINT height)
 {
     Render* render = new Render;
@@ -361,6 +479,8 @@ void Destroy(Render* render)
     ImGui_ImplDX12_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
+
+    free(render->instancesCpu);
 
 	delete render;
 }
@@ -622,15 +742,15 @@ void Initialize(Render* render, HWND hwnd)
     UINT32 texcoordsSize = 0;
     UINT32 indicesSize = 0;
     UINT32 materialsSize = 0;
-	OpenFileForGPU(render, L"instances.raw", instancesFile, instancesSize);
-	OpenFileForGPU(render, L"meshes.raw", meshesFile, meshesSize);
-	OpenFileForGPU(render, L"clusters.raw", clustersFile, clustersSize);
-	OpenFileForGPU(render, L"positions.raw", positionsFile, positionsSize);
-	OpenFileForGPU(render, L"normals.raw", normalsFile, normalsSize);
-	OpenFileForGPU(render, L"tangents.raw", tangentsFile, tangentsSize);
-	OpenFileForGPU(render, L"texcoords.raw", texcoordsFile, texcoordsSize);
-	OpenFileForGPU(render, L"indices.raw", indicesFile, indicesSize);
-	OpenFileForGPU(render, L"materials.raw", materialsFile, materialsSize);
+	OpenFileForLoading(render, L"instances.raw", instancesFile, instancesSize);
+	OpenFileForLoading(render, L"meshes.raw", meshesFile, meshesSize);
+	OpenFileForLoading(render, L"clusters.raw", clustersFile, clustersSize);
+	OpenFileForLoading(render, L"positions.raw", positionsFile, positionsSize);
+	OpenFileForLoading(render, L"normals.raw", normalsFile, normalsSize);
+	OpenFileForLoading(render, L"tangents.raw", tangentsFile, tangentsSize);
+	OpenFileForLoading(render, L"texcoords.raw", texcoordsFile, texcoordsSize);
+	OpenFileForLoading(render, L"indices.raw", indicesFile, indicesSize);
+	OpenFileForLoading(render, L"materials.raw", materialsFile, materialsSize);
     render->numInstances = instancesSize / sizeof(Instance);
     render->numClusters = clustersSize / sizeof(Cluster);
     render->maxNumClusters = MAX_ELEMENTS;
@@ -731,6 +851,22 @@ void Initialize(Render* render, HWND hwnd)
     }
 
     /*
+     * Wire root Signature
+     */
+    {
+        CD3DX12_ROOT_PARAMETER1 rootParameters[1];
+        rootParameters[0].InitAsConstantBufferView(0);
+
+        auto desc = CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC(_countof(rootParameters), rootParameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+        com_ptr<ID3DBlob> rootBlob;
+        com_ptr<ID3DBlob> errorBlob;
+        check_hresult(D3D12SerializeVersionedRootSignature(&desc, rootBlob.put(), errorBlob.put()));
+
+        check_hresult(render->device->CreateRootSignature(0, rootBlob->GetBufferPointer(), rootBlob->GetBufferSize(), IID_PPV_ARGS(render->drawWireRootSignature.put())));
+    }
+
+    /*
      * VBuffer PSO
      */
     {
@@ -765,6 +901,48 @@ void Initialize(Render* render, HWND hwnd)
         check_hresult(render->device->CreatePipelineState(&streamDesc, IID_PPV_ARGS(render->drawMeshPSO.put())));
 
         free(meshShader.data);
+        free(pixelShader.data);
+    }
+
+    /*
+     * Wire PSO
+     */
+    {
+        struct
+        {
+            byte* data;
+            uint32_t size;
+        } vertexShader, pixelShader;
+
+        ReadDataFromFile(L"x64/Debug/WireVS.cso", &vertexShader.data, &vertexShader.size);
+        ReadDataFromFile(L"x64/Debug/WirePS.cso", &pixelShader.data, &pixelShader.size);
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+		psoDesc.pRootSignature = render->drawWireRootSignature.get();
+        psoDesc.VS = { vertexShader.data, vertexShader.size };
+        psoDesc.PS = { pixelShader.data, pixelShader.size };
+		//psoDesc.StreamOutput;
+		psoDesc.BlendState = CD3DX12_BLEND_DESC(CD3DX12_DEFAULT());
+		psoDesc.SampleMask = 1;
+		psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(CD3DX12_DEFAULT());
+		//psoDesc.DepthStencilState;
+        D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
+            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        };
+        psoDesc.InputLayout = { inputLayout, 1 };
+		//psoDesc.IBStripCutValue;
+		psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+		psoDesc.NumRenderTargets = 1;
+		psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+		//psoDesc.DSVFormat;
+        psoDesc.SampleDesc = { 1, 0 };
+		//psoDesc.NodeMask;
+		//psoDesc.CachedPSO;
+		//psoDesc.Flags;
+
+		check_hresult(render->device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(render->drawWirePSO.put())));
+
+        free(vertexShader.data);
         free(pixelShader.data);
     }
 
@@ -827,7 +1005,10 @@ void Initialize(Render* render, HWND hwnd)
      * Load data using DirectStorage
      */
     {
+        render->instancesCpu = (Instance*)malloc(instancesSize);
+
         LoadFileToGPU(render, instancesFile, render->instancesBuffer.resource.get(), instancesSize);
+        LoadFileToCPU(render, instancesFile, render->instancesCpu, instancesSize);
         LoadFileToGPU(render, meshesFile, render->meshesBuffer.resource.get(), meshesSize);
         LoadFileToGPU(render, clustersFile, render->clustersBuffer.resource.get(), clustersSize);
         LoadFileToGPU(render, positionsFile, render->positionsBuffer.resource.get(), positionsSize);
@@ -911,6 +1092,24 @@ void Initialize(Render* render, HWND hwnd)
     render->cullingCamera.viewMat = make_float4x4_translation(render->cullingCamera.pos);
     render->drawingCamera = render->cullingCamera;
     render->lastTime = ImGui::GetTime();
+
+    uint wireContainerSize = render->numClusters * 12 * 2 + 1024;
+    for (int i = 0; i < NUM_QUEUED_FRAMES; i++)
+    {
+        CreateBuffer(render, &render->wireContainer[i].vertexBuffer,
+            BufferDesc(wireContainerSize, sizeof(float3))
+            .WithHeapType(D3D12_HEAP_TYPE_UPLOAD)
+            .WithName(L"WireContainer")
+            .WithResourceState(D3D12_RESOURCE_STATE_GENERIC_READ)
+        );
+
+        CD3DX12_RANGE readRange(0, 0);
+        check_hresult(render->wireContainer[i].vertexBuffer.resource->Map(0,
+            &readRange,
+            reinterpret_cast<void**>(&render->wireContainer[i].vertexPtr)));
+        render->wireContainer->maxVertices = wireContainerSize;
+        render->wireContainer->numVertices = 0;
+    }
 }
 
 void ExtractPlanesD3D(plane* planes, const float4x4& comboMatrix, bool normalizePlanes)
@@ -978,15 +1177,19 @@ void Draw(Render* render)
     UINT numClustersPassedCulling = readbackPtr[1];
     render->readbackBuffer.resource->Unmap(0, nullptr);
 
+    WireContainer* wireContainer = &render->wireContainer[render->frameIndex];
+    wireContainer->numVertices = 0;
+
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
     
     if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f))
     {
+        Render::Camera* cam = &render->drawingCamera;
         double time = ImGui::GetTime();
         float dt = (float)(time - render->lastTime);
-        float moveSpeed = 100.0f;
+        float moveSpeed = 1.0f;
         float lookSpeed = 0.3f;
         render->lastTime = time;
         
@@ -994,16 +1197,16 @@ void Draw(Render* render)
             moveSpeed *= 10.0f;
 
         ImVec2 delta = ImGui::GetMouseDragDelta();
-        render->cullingCamera.pitch += delta.y * lookSpeed * dt;
-        render->cullingCamera.yaw += delta.x * lookSpeed * dt;
-        while (render->cullingCamera.yaw >= PI_2) render->cullingCamera.yaw -= PI_2;
-        while (render->cullingCamera.yaw < 0.0f) render->cullingCamera.yaw += PI_2;
-        if (render->cullingCamera.pitch < -PI_HALF) render->cullingCamera.pitch = -PI_HALF;
-        if (render->cullingCamera.pitch > PI_HALF) render->cullingCamera.pitch = PI_HALF;
+        cam->pitch += delta.y * lookSpeed * dt;
+        cam->yaw += delta.x * lookSpeed * dt;
+        while (cam->yaw >= PI_2) cam->yaw -= PI_2;
+        while (cam->yaw < 0.0f) cam->yaw += PI_2;
+        if (cam->pitch < -PI_HALF) cam->pitch = -PI_HALF;
+        if (cam->pitch > PI_HALF) cam->pitch = PI_HALF;
         ImGui::ResetMouseDragDelta();
 
-        float4x4 rotMat = make_float4x4_rotation_y(render->cullingCamera.yaw)
-            * make_float4x4_rotation_x(render->cullingCamera.pitch);
+        float4x4 rotMat = make_float4x4_rotation_y(cam->yaw)
+            * make_float4x4_rotation_x(cam->pitch);
         float3 forward = float3(rotMat.m13, rotMat.m23, rotMat.m33);
         float3 right = float3(rotMat.m11, rotMat.m21, rotMat.m31);
 
@@ -1014,20 +1217,22 @@ void Draw(Render* render)
 
         float dist = dt * moveSpeed;
         if (w_pressed)
-            render->cullingCamera.pos += forward * dist;
+            cam->pos += forward * dist;
         if (a_pressed)
-            render->cullingCamera.pos += right * dist;
+            cam->pos += right * dist;
         if (s_pressed)
-            render->cullingCamera.pos -= forward * dist;
+            cam->pos -= forward * dist;
         if (d_pressed)
-            render->cullingCamera.pos -= right * dist;
+            cam->pos -= right * dist;
+
+		cam->viewMat = make_float4x4_translation(cam->pos)
+			* make_float4x4_rotation_y(cam->yaw)
+			* make_float4x4_rotation_x(cam->pitch);
     }
 
-    render->cullingCamera.viewMat = make_float4x4_translation(render->cullingCamera.pos)
-        * make_float4x4_rotation_y(render->cullingCamera.yaw)
-        * make_float4x4_rotation_x(render->cullingCamera.pitch);
-
-    render->drawingCamera = render->cullingCamera;
+        
+    if (ImGui::IsKeyDown(ImGuiKey_L))
+        render->cullingCamera = render->drawingCamera;
 
     {
         float4x4 viewProj = render->cullingCamera.viewMat * render->cullingCamera.projMat;
@@ -1062,6 +1267,22 @@ void Draw(Render* render)
     render->constantBufferData.Counts.z = 0;
     render->constantBufferData.Counts.w = 0;
     memcpy(render->cbvDataBegin + sizeof(Constants) * render->frameIndex, &render->constantBufferData, sizeof(render->constantBufferData));
+
+
+    // Debug visualization
+    {
+        float4x4 viewProj = render->cullingCamera.viewMat * render->cullingCamera.projMat;
+        float4x4 invViewProj;
+        invert(viewProj, &invViewProj);
+        wireContainer->AddFrustum(invViewProj);
+
+        for (int i = 0; i < render->numInstances; ++i)
+        {
+            Instance* instance = render->instancesCpu + i;
+
+            wireContainer->AddAABB(instance->Box);
+        }
+    }
 
     ID3D12DescriptorHeap* heaps[] = {
         render->uniHeap.get(),
@@ -1149,6 +1370,17 @@ void Draw(Render* render)
     ImGui::Render();
 
     render->commandList->OMSetRenderTargets(1, &render->colorBufferRTV, FALSE, nullptr);
+    render->commandList->SetGraphicsRootSignature(render->drawWireRootSignature.get());
+    render->commandList->SetPipelineState(render->drawWirePSO.get());
+    render->commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+    D3D12_VERTEX_BUFFER_VIEW vbView{
+        wireContainer->vertexBuffer.resource->GetGPUVirtualAddress(),
+        wireContainer->numVertices * sizeof(float3),
+        sizeof(float3)
+    };
+    render->commandList->IASetVertexBuffers(0, 1, &vbView);
+    render->commandList->DrawInstanced(wireContainer->numVertices, 1, 0, 0);
+
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), render->commandList.get());
 
     {

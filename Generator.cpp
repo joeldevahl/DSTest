@@ -52,7 +52,7 @@ static CenterExtentsAABB TransformAABB(const CenterExtentsAABB& in, const float4
 	ext = min(abs(tp6 - in.Center), ext);
 	ext = min(abs(tp7 - in.Center), ext);
 
-	return CenterExtentsAABB{ in.Center, ext};
+	return CenterExtentsAABB{ in.Center + translation(mat), ext};
 }
 
 static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instances, const std::vector<Mesh>& meshes, cgltf_node* node)
@@ -84,7 +84,6 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 			float4x4 translationMat = make_float4x4_translation(translation);
 
 			float4x4 modelMat = scaleMat * rotationMat * translationMat;
-
 
 			float maxScale = scale.x > scale.y ? scale.x : scale.y;
 			maxScale = maxScale > scale.z ? maxScale : scale.z;
