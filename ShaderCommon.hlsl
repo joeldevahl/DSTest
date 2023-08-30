@@ -33,7 +33,7 @@ Material GetMaterial(uint idx) { return GetMaterialBuffer()[idx]; }
 CenterExtentsAABB TransformAABB(CenterExtentsAABB aabb, float4x4 mat)
 {
 	CenterExtentsAABB res;
-	res.Center = mul(mat, aabb.Center);
+	res.Center = mul(mat, float4(aabb.Center, 1.0f)).xyz;
 
 	float3x3 absmat = float3x3(
 		abs(mat._m00), abs(mat._m01), abs(mat._m02),

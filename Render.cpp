@@ -1191,6 +1191,7 @@ bool IsCulled(CenterExtentsAABB aabb, Camera& camera)
 
 static bool visualizeInstances = false;
 static bool visualizeClusters = false;
+static bool fastMove = false;
 
 void Draw(Render* render)
 {
@@ -1224,7 +1225,7 @@ void Draw(Render* render)
         Render::Camera* cam = &render->drawingCamera;
         double time = ImGui::GetTime();
         float dt = (float)(time - render->lastTime);
-        float moveSpeed = 100.0f;
+        float moveSpeed = fastMove ? 100.0f : 1.0f;
         float lookSpeed = 0.3f;
         render->lastTime = time;
         
@@ -1425,6 +1426,7 @@ void Draw(Render* render)
     ImGui::Begin("Hello, world!", nullptr, windowFlags);
     ImGui::Text("Instances: %d (of %d)", numInstancesPassedCulling, render->numInstances);
     ImGui::Text("Clusters: %d (of %d)", numClustersPassedCulling, render->numClusters);
+    ImGui::Checkbox("Fast Move", &fastMove);
     ImGui::Checkbox("Vizualize Instances", &visualizeInstances);
     ImGui::Checkbox("Vizualize Clusters", &visualizeClusters);
     ImGui::End();
