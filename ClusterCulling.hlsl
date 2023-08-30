@@ -20,7 +20,8 @@ void main(uint dtid : SV_DispatchThreadID)
 	{
 		Cluster cluster = GetCluster(mesh.ClusterStart + i);
 
-		if (IsCulled(cluster.Bounds))
+		CenterExtentsAABB box = TransformAABB(cluster.Box, instance.ModelMatrix);
+		if (IsCulled(box))
 			continue;
 
 		uint offset = 0;

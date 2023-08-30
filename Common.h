@@ -37,12 +37,6 @@ struct CenterExtentsAABB
     float3 Extents; // half extents
 };
 
-struct Sphere
-{
-    float3 Center;
-    float Radius;
-};
-
 struct Camera
 {
     float4x4 ViewMatrix;
@@ -65,7 +59,6 @@ struct Instance
     uint MeshIndex;
     uint MaterialIndex;
 
-    Sphere Bounds;
     CenterExtentsAABB Box;
 };
 
@@ -75,7 +68,6 @@ struct Mesh
     uint ClusterCount;
 
     // TODO: these do not need to be uploaded to GPU
-    Sphere Bounds;
     CenterExtentsAABB Box;
 };
 
@@ -86,7 +78,6 @@ struct Cluster
     uint VertexStart;
     uint VertexCount;
 
-    Sphere Bounds;
     CenterExtentsAABB Box; // TODO: OOBB?
 };
 

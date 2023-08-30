@@ -30,20 +30,37 @@ float2 GetTexcoord(uint idx) { return asfloat(GetTexcoordDataBuffer().Load2(idx 
 uint3 GetTri(uint idx) { return GetIndexDataBuffer().Load3(idx * 12); }
 Material GetMaterial(uint idx) { return GetMaterialBuffer()[idx]; }
 
-bool IsSphereOutsidePlane(Sphere s, float4 p)
+CenterExtentsAABB TransformAABB(CenterExtentsAABB aabb, float4x4 mat)
 {
-	float d = dot(p.xyz, s.Center) + p.w;
-	return d < -s.Radius;
+	CenterExtentsAABB res;
+	res.Center = mul(mat, aabb.Center);
+
+	float3x3 absmat = float3x3(
+		abs(mat._m00), abs(mat._m01), abs(mat._m02),
+		abs(mat._m10), abs(mat._m11), abs(mat._m12),
+		abs(mat._m20), abs(mat._m21), abs(mat._m22)
+	);
+
+	res.Extents = mul(absmat, aabb.Extents);
+
+	return res;
 }
 
-bool IsCulled(Sphere s)
+bool IsBoxOutsidePlane(CenterExtentsAABB aabb, float4 p)
 {
-	bool t0 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[0]);
-	bool t1 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[1]);
-	bool t2 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[2]);
-	bool t3 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[3]);
-	bool t4 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[4]);
-	bool t5 = IsSphereOutsidePlane(s, constants.CullingCamera.FrustumPlanes[5]);
+	float d = dot(p.xyz, aabb.Center);
+	float r = dot(abs(p.xyz), aabb.Extents);
+    return d + r < -p.w;
+}
+
+bool IsCulled(CenterExtentsAABB aabb)
+{
+	bool t0 = IsBoxOutsidePlane(aabb, constants.CullingCamera.FrustumPlanes[0]);
+	bool t1 = IsBoxOutsidePlane(aabb, constants.CullingCamera.FrustumPlanes[1]);
+	bool t2 = IsBoxOutsidePlane(aabb, constants.CullingCamera.FrustumPlanes[2]);
+	bool t3 = IsBoxOutsidePlane(aabb, constants.CullingCamera.FrustumPlanes[3]);
+	bool t4 = IsBoxOutsidePlane(aabb, constants.CullingCamera.FrustumPlanes[4]);
+	bool t5 = IsBoxOutsidePlane(aabb, constants.CullingCamera.FrustumPlanes[5]);
 
 	return t0 | t1 | t2 | t3 | t4 | t5;
 }

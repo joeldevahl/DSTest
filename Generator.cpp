@@ -16,45 +16,7 @@ static void OutputDataToFile(LPCWSTR filename, const std::vector<T>& arr)
 	WriteFile(file, data, size, nullptr, nullptr);
 	CloseHandle(file);
 }
-
-inline float3 abs(float3 const& val)
-{
-	return float3(fabs(val.x), fabs(val.y), fabs(val.z));
-}
     
-static CenterExtentsAABB TransformAABB(const CenterExtentsAABB& in, const float4x4& mat)
-{
-	float3 p0 = in.Center + (in.Extents * float3(-1.0f, -1.0f, -1.0f));
-	float3 p1 = in.Center + (in.Extents * float3( 1.0f, -1.0f, -1.0f));
-	float3 p2 = in.Center + (in.Extents * float3(-1.0f,  1.0f, -1.0f));
-	float3 p3 = in.Center + (in.Extents * float3( 1.0f,  1.0f, -1.0f));
-	float3 p4 = in.Center + (in.Extents * float3(-1.0f, -1.0f,  1.0f));
-	float3 p5 = in.Center + (in.Extents * float3( 1.0f, -1.0f,  1.0f));
-	float3 p6 = in.Center + (in.Extents * float3(-1.0f,  1.0f,  1.0f));
-	float3 p7 = in.Center + (in.Extents * float3( 1.0f,  1.0f,  1.0f));
-
-	float3 tp0 = transform(p0, mat);
-	float3 tp1 = transform(p1, mat);
-	float3 tp2 = transform(p2, mat);
-	float3 tp3 = transform(p3, mat);
-	float3 tp4 = transform(p4, mat);
-	float3 tp5 = transform(p5, mat);
-	float3 tp6 = transform(p6, mat);
-	float3 tp7 = transform(p7, mat);
-
-	float3 ext = float3(FLT_MAX);
-	ext = min(abs(tp0 - in.Center), ext);
-	ext = min(abs(tp1 - in.Center), ext);
-	ext = min(abs(tp2 - in.Center), ext);
-	ext = min(abs(tp3 - in.Center), ext);
-	ext = min(abs(tp4 - in.Center), ext);
-	ext = min(abs(tp5 - in.Center), ext);
-	ext = min(abs(tp6 - in.Center), ext);
-	ext = min(abs(tp7 - in.Center), ext);
-
-	return CenterExtentsAABB{ in.Center + translation(mat), ext};
-}
-
 static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instances, const std::vector<Mesh>& meshes, cgltf_node* node)
 {
 	if (node->mesh != nullptr)
@@ -85,28 +47,12 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 
 			float4x4 modelMat = scaleMat * rotationMat * translationMat;
 
-			float maxScale = scale.x > scale.y ? scale.x : scale.y;
-			maxScale = maxScale > scale.z ? maxScale : scale.z;
-			Sphere bounds = Sphere{
-				meshes[meshID].Bounds.Center + translation,
-				meshes[meshID].Bounds.Radius * maxScale,
-			};
-			instances.push_back(Instance{ modelMat, meshID, 0, bounds, TransformAABB(meshes[meshID].Box, modelMat)});
+			instances.push_back(Instance{ modelMat, meshID, 0, TransformAABB(meshes[meshID].Box, modelMat)});
 		}
 	}
 		
 	for (int c = 0; c < node->children_count; ++c)
 		ConvertNodeHierarchy(data, instances, meshes, node->children[c]);
-}
-
-static Sphere MinMaxToSphere(MinMaxAABB& aabb)
-{
-	float3 c = (aabb.Min + aabb.Max) * 0.5f;
-	float3 e = c - aabb.Min;
-	return Sphere{
-		c,
-		length(e), // TODO: ???
-	};
 }
 
 void Generate(const char* filename, const char* filenameBin)
@@ -303,7 +249,6 @@ void Generate(const char* filename, const char* filenameBin)
 					meshlet.triangle_count,
 					outputVerticesOffset,
 					meshlet.vertex_count,
-					MinMaxToSphere(clusterBounds),
 					MinMaxToCenterExtents(clusterBounds),
 				});
 
@@ -315,7 +260,6 @@ void Generate(const char* filename, const char* filenameBin)
 		out_meshes.push_back(Mesh{
 			cluster_start,
 			(UINT)out_clusters.size() - cluster_start,
-			MinMaxToSphere(meshBounds),
 			MinMaxToCenterExtents(meshBounds),
 		});
 	}

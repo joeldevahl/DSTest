@@ -222,6 +222,8 @@ struct Render
     char* cbvDataBegin;
 
     Instance* instancesCpu;
+    Mesh* meshesCpu;
+    Cluster* clustersCpu;
 
     Buffer visibleInstances;
     Buffer visibleClusters;
@@ -481,6 +483,8 @@ void Destroy(Render* render)
     ImGui::DestroyContext();
 
     free(render->instancesCpu);
+    free(render->meshesCpu);
+    free(render->clustersCpu);
 
 	delete render;
 }
@@ -1006,11 +1010,15 @@ void Initialize(Render* render, HWND hwnd)
      */
     {
         render->instancesCpu = (Instance*)malloc(instancesSize);
+        render->meshesCpu = (Mesh*)malloc(meshesSize);
+        render->clustersCpu = (Cluster*)malloc(clustersSize);
 
         LoadFileToGPU(render, instancesFile, render->instancesBuffer.resource.get(), instancesSize);
         LoadFileToCPU(render, instancesFile, render->instancesCpu, instancesSize);
         LoadFileToGPU(render, meshesFile, render->meshesBuffer.resource.get(), meshesSize);
+        LoadFileToCPU(render, meshesFile, render->meshesCpu, meshesSize);
         LoadFileToGPU(render, clustersFile, render->clustersBuffer.resource.get(), clustersSize);
+        LoadFileToCPU(render, clustersFile, render->clustersCpu, clustersSize);
         LoadFileToGPU(render, positionsFile, render->positionsBuffer.resource.get(), positionsSize);
         LoadFileToGPU(render, normalsFile, render->normalsBuffer.resource.get(), normalsSize);
         LoadFileToGPU(render, tangentsFile, render->tangentsBuffer.resource.get(), tangentsSize);
@@ -1162,10 +1170,37 @@ void ExtractPlanesD3D(plane* planes, const float4x4& comboMatrix, bool normalize
     }
 }
 
+bool IsBoxOutsidePlane(CenterExtentsAABB aabb, plane p)
+{
+	float d = dot(p.normal, aabb.Center);
+	float r = dot(abs(p.normal), aabb.Extents);
+    return d + r < -p.d;
+}
+
+bool IsCulled(CenterExtentsAABB aabb, Camera& camera)
+{
+	bool t0 = IsBoxOutsidePlane(aabb, plane(camera.FrustumPlanes[0]));
+	bool t1 = IsBoxOutsidePlane(aabb, plane(camera.FrustumPlanes[1]));
+	bool t2 = IsBoxOutsidePlane(aabb, plane(camera.FrustumPlanes[2]));
+	bool t3 = IsBoxOutsidePlane(aabb, plane(camera.FrustumPlanes[3]));
+	bool t4 = IsBoxOutsidePlane(aabb, plane(camera.FrustumPlanes[4]));
+	bool t5 = IsBoxOutsidePlane(aabb, plane(camera.FrustumPlanes[5]));
+
+	return t0 | t1 | t2 | t3 | t4 | t5;
+}
+
+static bool visualizeInstances = false;
+static bool visualizeClusters = false;
+
 void Draw(Render* render)
 {
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
+
+    CenterExtentsAABB testAABB{ float3(1.0f, 1.0, 1.0f), float3(1.0f, 1.0f, 1.0f) };
+    float4x4 testMatrix = make_float4x4_translation(float3(2.0f, 0.0, -2.0f));
+    CenterExtentsAABB resultAABB = TransformAABB(testAABB, testMatrix);
+
 
     D3D12_RANGE readbackBufferRange{
         (1 + 3) * sizeof(UINT) * render->frameIndex,
@@ -1189,7 +1224,7 @@ void Draw(Render* render)
         Render::Camera* cam = &render->drawingCamera;
         double time = ImGui::GetTime();
         float dt = (float)(time - render->lastTime);
-        float moveSpeed = 1.0f;
+        float moveSpeed = 100.0f;
         float lookSpeed = 0.3f;
         render->lastTime = time;
         
@@ -1234,6 +1269,8 @@ void Draw(Render* render)
     if (ImGui::IsKeyDown(ImGuiKey_L))
         render->cullingCamera = render->drawingCamera;
 
+
+    Camera cullCam = {};
     {
         float4x4 viewProj = render->cullingCamera.viewMat * render->cullingCamera.projMat;
         float4x4 invViewProj;
@@ -1246,6 +1283,8 @@ void Draw(Render* render)
         render->constantBufferData.CullingCamera.InverseProjectionMatrix = invProj;
         render->constantBufferData.CullingCamera.InverseViewProjectionMatrix = invViewProj;
         ExtractPlanesD3D((plane*)render->constantBufferData.CullingCamera.FrustumPlanes, viewProj, true);
+
+        cullCam = render->constantBufferData.CullingCamera;
     }
 
     {
@@ -1280,7 +1319,27 @@ void Draw(Render* render)
         {
             Instance* instance = render->instancesCpu + i;
 
-            wireContainer->AddAABB(instance->Box);
+            if (IsCulled(instance->Box, cullCam))
+                continue;
+
+            if (visualizeInstances)
+			    wireContainer->AddAABB(instance->Box);
+
+            if (visualizeClusters)
+            {
+                Mesh* mesh = render->meshesCpu + instance->MeshIndex;
+                for (int c = 0; c < mesh->ClusterCount; ++c)
+                {
+                    Cluster* cluster = render->clustersCpu + mesh->ClusterStart + c;
+
+                    CenterExtentsAABB box = TransformAABB(cluster->Box, instance->ModelMatrix);
+
+					if (IsCulled(box, cullCam))
+						continue;
+
+                    wireContainer->AddAABB(box);
+                }
+            }
         }
     }
 
@@ -1366,6 +1425,8 @@ void Draw(Render* render)
     ImGui::Begin("Hello, world!", nullptr, windowFlags);
     ImGui::Text("Instances: %d (of %d)", numInstancesPassedCulling, render->numInstances);
     ImGui::Text("Clusters: %d (of %d)", numClustersPassedCulling, render->numClusters);
+    ImGui::Checkbox("Vizualize Instances", &visualizeInstances);
+    ImGui::Checkbox("Vizualize Clusters", &visualizeClusters);
     ImGui::End();
     ImGui::Render();
 

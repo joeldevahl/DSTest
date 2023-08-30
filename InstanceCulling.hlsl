@@ -8,7 +8,7 @@ void main(uint dtid : SV_DispatchThreadID)
 
 	Instance instance = GetInstance(dtid);
 
-	if (IsCulled(instance.Bounds))
+	if (IsCulled(instance.Box))
 		return;
 
 	RWByteAddressBuffer visibleInstancesCounter = ResourceDescriptorHeap[VISIBLE_INSTANCES_COUNTER_UAV];

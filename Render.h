@@ -21,6 +21,27 @@ inline CenterExtentsAABB MinMaxToCenterExtents(const MinMaxAABB& mm)
     };
 }
 
+inline float3 abs(float3 const& val)
+{
+	return float3(fabs(val.x), fabs(val.y), fabs(val.z));
+}
+
+inline CenterExtentsAABB TransformAABB(const CenterExtentsAABB& in, const float4x4& mat)
+{
+	float3 center = transform(in.Center, mat);
+
+	float4x4 absmat = float4x4(
+		fabs(mat.m11), fabs(mat.m12), fabs(mat.m13), 0.0f,
+		fabs(mat.m21), fabs(mat.m22), fabs(mat.m23), 0.0f,
+		fabs(mat.m31), fabs(mat.m32), fabs(mat.m33), 0.0f,
+		0.0f, 0.0f, 0.0f, 1.0f
+	);
+
+	float3 extents = transform_normal(in.Extents, absmat);
+
+	return CenterExtentsAABB{ center, extents };
+}
+
 Render* CreateRender(UINT width, UINT height);
 void Destroy(Render* render);
 
