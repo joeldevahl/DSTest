@@ -1192,6 +1192,7 @@ bool IsCulled(CenterExtentsAABB aabb, Camera& camera)
 static bool visualizeInstances = false;
 static bool visualizeClusters = false;
 static bool fastMove = false;
+static bool lockedCullingCamera = false;
 
 void Draw(Render* render)
 {
@@ -1266,10 +1267,8 @@ void Draw(Render* render)
 			* make_float4x4_rotation_x(cam->pitch);
     }
 
-        
-    if (ImGui::IsKeyDown(ImGuiKey_L))
-        render->cullingCamera = render->drawingCamera;
-
+    if (!lockedCullingCamera || ImGui::IsKeyDown(ImGuiKey_L))
+		render->cullingCamera = render->drawingCamera;
 
     Camera cullCam = {};
     {
@@ -1311,10 +1310,14 @@ void Draw(Render* render)
 
     // Debug visualization
     {
-        float4x4 viewProj = render->cullingCamera.viewMat * render->cullingCamera.projMat;
-        float4x4 invViewProj;
-        invert(viewProj, &invViewProj);
-        wireContainer->AddFrustum(invViewProj);
+        if (lockedCullingCamera)
+        {
+            float4x4 viewProj = render->cullingCamera.viewMat * render->cullingCamera.projMat;
+            float4x4 invViewProj;
+            invert(viewProj, &invViewProj);
+
+            wireContainer->AddFrustum(invViewProj);
+        }
 
         for (int i = 0; i < render->numInstances; ++i)
         {
@@ -1427,6 +1430,7 @@ void Draw(Render* render)
     ImGui::Text("Instances: %d (of %d)", numInstancesPassedCulling, render->numInstances);
     ImGui::Text("Clusters: %d (of %d)", numClustersPassedCulling, render->numClusters);
     ImGui::Checkbox("Fast Move", &fastMove);
+    ImGui::Checkbox("Locked Culling Camera", &lockedCullingCamera);
     ImGui::Checkbox("Vizualize Instances", &visualizeInstances);
     ImGui::Checkbox("Vizualize Clusters", &visualizeClusters);
     ImGui::End();
