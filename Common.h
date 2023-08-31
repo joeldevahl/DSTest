@@ -84,5 +84,7 @@ struct Cluster
 struct Material
 {
     float4 Color;
+    float Metallic;
+    float Roughness;
 };
 

@@ -140,10 +140,10 @@ struct WireContainer
 		float4 p2nt = transform(float4(-1.0f, 1.0f, 0.0f, 1.0f), mat);
 		float4 p3nt = transform(float4(1.0f, 1.0f, 0.0f, 1.0f), mat);
 
-		float4 p0ft = transform(float4(-1.0f, -1.0f, 0.9f, 1.0f), mat);
-		float4 p1ft = transform(float4(1.0f, -1.0f, 0.9f, 1.0f), mat);
-		float4 p2ft = transform(float4(-1.0f, 1.0f, 0.9f, 1.0f), mat);
-		float4 p3ft = transform(float4(1.0f, 1.0f, 0.9f, 1.0f), mat);
+		float4 p0ft = transform(float4(-1.0f, -1.0f, 0.9999f, 1.0f), mat);
+		float4 p1ft = transform(float4(1.0f, -1.0f, 0.9999f, 1.0f), mat);
+		float4 p2ft = transform(float4(-1.0f, 1.0f, 0.9999f, 1.0f), mat);
+		float4 p3ft = transform(float4(1.0f, 1.0f, 0.9999f, 1.0f), mat);
 
 		float3 p0n = float3(p0nt.x, p0nt.y, p0nt.z) / p0nt.w;
 		float3 p1n = float3(p1nt.x, p1nt.y, p1nt.z) / p1nt.w;

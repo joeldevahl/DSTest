@@ -22,6 +22,8 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 	if (node->mesh != nullptr)
 	{
 		UINT meshID = node->mesh - data->meshes;
+		// TODO: wrong, since a mesh can have several primitives with different materials
+		UINT materialID = node->mesh->primitives->material - data->materials;
 
 		if (node->has_matrix)
 		{
@@ -47,7 +49,8 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 
 			float4x4 modelMat = scaleMat * rotationMat * translationMat;
 
-			instances.push_back(Instance{ modelMat, meshID, 0, TransformAABB(meshes[meshID].Box, modelMat)});
+
+			instances.push_back(Instance{ modelMat, meshID, materialID, TransformAABB(meshes[meshID].Box, modelMat)});
 		}
 	}
 		
@@ -263,8 +266,25 @@ void Generate(const char* filename, const char* filenameBin)
 			MinMaxToCenterExtents(meshBounds),
 		});
 	}
+	
+	for (int m = 0; m < data->materials_count; ++m)
+	{
+		cgltf_material* mat = data->materials + m;
 
-	out_materials.push_back(Material{ {1.0f, 1.0f, 0.0f, 1.0f} });
+		float4 color = { 1.0f, 1.0f, 0.0f, 1.0f };
+		float metallic = 0.0f;
+		float roughness = 1.0f;
+
+		if (mat->has_pbr_metallic_roughness)
+		{
+			color = float4(mat->pbr_metallic_roughness.base_color_factor[0],
+				mat->pbr_metallic_roughness.base_color_factor[1],
+				mat->pbr_metallic_roughness.base_color_factor[2],
+				mat->pbr_metallic_roughness.base_color_factor[3]);
+		}
+
+		out_materials.push_back(Material{ color, metallic, roughness });
+	}
 
 	assert(data->scene != nullptr);
 
