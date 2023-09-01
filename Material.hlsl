@@ -3,6 +3,69 @@
 //#define DEBUG_VISIBILITY_BUFFER
 //#define DEBUG_DEPTH_BUFFER
 
+#define Pi 3.14159265359f
+
+float3 Fresnel(in float3 specAlbedo, in float3 h, in float3 l)
+{
+	float3 fresnel = specAlbedo + (1.0f - specAlbedo) * pow((1.0f - saturate(dot(l, h))), 5.0f);
+
+	// Fade out spec entirely when lower than 0.1% albedo
+	fresnel *= saturate(dot(specAlbedo, 333.0f));
+
+	return fresnel;
+}
+
+float GGXV1(in float m2, in float nDotX)
+{
+	return 1.0f / (nDotX + sqrt(m2 + (1 - m2) * nDotX * nDotX));
+}
+
+float GGXVisibility(in float m2, in float nDotL, in float nDotV)
+{
+	return GGXV1(m2, nDotL) * GGXV1(m2, nDotV);
+}
+
+float GGXSpecular(in float m, in float3 n, in float3 h, in float3 v, in float3 l)
+{
+	float nDotH = saturate(dot(n, h));
+	float nDotL = saturate(dot(n, l));
+	float nDotV = saturate(dot(n, v));
+
+	float nDotH2 = nDotH * nDotH;
+	float m2 = m * m;
+
+	// Calculate the distribution term
+	float x = nDotH * nDotH * (m2 - 1) + 1;
+	float d = m2 / (Pi * x * x);
+
+	// Calculate the matching visibility term
+	float vis = GGXVisibility(m2, nDotL, nDotV);
+
+	return d * vis;
+}
+
+float3 CalcLighting(in float3 normal, in float3 lightDir, in float3 peakIrradiance,
+	in float3 diffuseAlbedo, in float3 specularAlbedo, in float roughness,
+	in float3 positionWS, in float3 cameraPosWS, in float3 msEnergyCompensation)
+{
+	float3 lighting = diffuseAlbedo * (1.0f / 3.14159f);
+
+	float3 view = normalize(cameraPosWS - positionWS);
+	const float nDotL = saturate(dot(normal, lightDir));
+	if (nDotL > 0.0f)
+	{
+		const float nDotV = saturate(dot(normal, view));
+		float3 h = normalize(view + lightDir);
+
+		float3 fresnel = Fresnel(specularAlbedo, h, lightDir);
+
+		float specular = GGXSpecular(roughness, normal, h, view, lightDir);
+		lighting += specular * fresnel * msEnergyCompensation;
+	}
+
+	return lighting * nDotL * peakIrradiance;
+}
+
 float3 Barycentric(float3 p, float3 a, float3 b, float3 c)
 {
 	float3 v0 = b - a;
@@ -105,13 +168,22 @@ void main(uint2 dtid : SV_DispatchThreadID)
 	float3 n2 = GetNormal(cluster.VertexStart + tri.z);
 
 	float3 n = n0 * b.x + n1 * b.y + n2 * b.z;
+	float3 p = vv0 * b.x + vv1 + b.y + vv2 * b.z;
 
 	float3 l = normalize(float3(10.0f, 10.0f, 10.0f));
 
-	float a = 0.5f + dot(n, l) * 0.5;
-
     Material material = GetMaterial(instance.MaterialIndex);
 
-	colorBuffer[dtid] = material.Color * a;
+	float3 color = CalcLighting(
+		n,
+		l,
+		float3(1.0f, 1.0f, 1.0f),
+		material.Color,
+		material.Color,
+		material.Roughness,
+		p,
+		float3(0.0f, 0.0f, 0.0f),
+		float3(1.0f, 1.0f, 1.0f));
+	colorBuffer[dtid] = float4(color, 1.0f);
 #endif
 }
