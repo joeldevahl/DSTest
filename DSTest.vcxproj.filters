@@ -79,9 +79,6 @@
     <ClInclude Include="Render.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="d3dx12.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="Generator.h">
       <Filter>Header Files</Filter>
     </ClInclude>

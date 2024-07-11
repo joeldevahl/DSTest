@@ -20,6 +20,8 @@
 
 #define IMGUI_FONT_SRV 19
 
+#define WORK_GRAPH_UAV 20
+
 // HACKS TO REMOVE
 #define VBUFFER_SRV 16
 

@@ -5,12 +5,15 @@
 #include <dstorage.h>
 #include <winrt/base.h>
 
+#include <dxcapi.h>
+
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx12.h"
 
 using winrt::com_ptr;
 using winrt::check_hresult;
+using winrt::check_bool;
 
 #define PI 3.14159265358979323846f
 #define PI_2 (PI * 2.0f)
@@ -18,7 +21,7 @@ using winrt::check_hresult;
 
 #define NUM_QUEUED_FRAMES 3
 
-extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 711; }
+extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 613; }
 extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = u8".\\D3D12\\"; }
 
 enum class RenderTargets : int
@@ -74,6 +77,7 @@ struct BufferDesc
 struct Buffer
 {
     com_ptr<ID3D12Resource> resource;
+    D3D12_GPU_VIRTUAL_ADDRESS_RANGE addressRange;
 };
 
 struct WireContainer
@@ -178,7 +182,7 @@ struct Render
     UINT height = 720;
 
     com_ptr<IDXGIFactory6> dxgiFactory;
-    com_ptr<ID3D12Device6> device;
+    com_ptr<ID3D12Device14> device;
     com_ptr<IDStorageFactory> storageFactory;
     com_ptr<ID3D12CommandQueue> commandQueue;
     com_ptr<IDStorageQueue> storageQueue;
@@ -219,6 +223,8 @@ struct Render
     Buffer texcoordsBuffer;
     Buffer indexDataBuffer;
     Buffer materialsBuffer;
+    Buffer workGraphBuffer;
+    Buffer workGraphBackingMemory;
     char* cbvDataBegin;
 
     Instance* instancesCpu;
@@ -242,7 +248,10 @@ struct Render
     com_ptr<ID3D12PipelineState> clusterCullingPSO;
     com_ptr<ID3D12PipelineState> materialPSO;
 
-    com_ptr<ID3D12GraphicsCommandList6> commandList;
+    com_ptr<ID3D12StateObject> workGraphSO;
+    D3D12_PROGRAM_IDENTIFIER workGraphIdentifier;
+
+    com_ptr<ID3D12GraphicsCommandList10> commandList;
 
     com_ptr<ID3D12Fence1> fence;
     UINT64 fenceValues[NUM_QUEUED_FRAMES];
@@ -265,6 +274,8 @@ struct Render
     double lastTime;
 
     WireContainer wireContainer[NUM_QUEUED_FRAMES];
+
+    com_ptr<ID3DBlob> workGraphBlob;
 };
 
 struct handle_closer
@@ -339,6 +350,66 @@ static HRESULT ReadDataFromFile(LPCWSTR filename, byte** data, UINT* size)
     return S_OK;
 }
 
+static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR shader_name, LPCWSTR target)
+{
+    struct
+    {
+        byte* data;
+        uint32_t size;
+    } shaderSource;
+
+    ReadDataFromFile(shader_name, &shaderSource.data, &shaderSource.size);
+
+    com_ptr<IDxcCompiler3> compiler;
+    check_hresult(DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler)));
+
+    com_ptr<IDxcUtils> utils;
+    check_hresult(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&utils)));
+
+    com_ptr<IDxcBlobEncoding> source;
+    check_hresult(utils->CreateBlob(shaderSource.data, shaderSource.size, CP_UTF8, source.put()));
+
+    std::vector<LPCWSTR> arguments;
+    arguments.push_back(L"-T");
+    arguments.push_back(target);
+
+    arguments.push_back(L"-I");
+    arguments.push_back(L"C:/Code/DSTest/");
+
+    DxcBuffer sourceBuffer;
+    sourceBuffer.Ptr = source->GetBufferPointer();
+    sourceBuffer.Size = source->GetBufferSize();
+    sourceBuffer.Encoding = 0;
+
+    com_ptr<IDxcResult> compileResult;
+    winrt::hresult result = check_hresult(compiler->Compile(&sourceBuffer, arguments.data(), arguments.size(), nullptr, IID_PPV_ARGS(&compileResult)));
+
+    // Error Handling. Note that this will also include warnings unless disabled.
+    com_ptr<IDxcBlobUtf8> errors;
+    compileResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr);
+    if (errors && errors->GetStringLength() > 0)
+    {
+        const char* text = (char*)errors->GetBufferPointer();
+        OutputDebugStringA(text);
+    }
+
+    if (result != S_OK)
+    {
+        __debugbreak();
+    }
+
+    com_ptr<ID3DBlob> object;
+    compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&object), nullptr);
+    return object;
+}
+
+static bool CompileShaders(Render* render)
+{
+    render->workGraphBlob = CompileShader(render, L"WorkGraph.hlsl", L"lib_6_8");
+
+    return true;
+}
+
 static com_ptr<ID3D12DescriptorHeap> CreateDescriptorHeap(Render* render, D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count, D3D12_DESCRIPTOR_HEAP_FLAGS flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE)
 {
 	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
@@ -372,7 +443,6 @@ static void CreateBuffer(Render* render, Buffer* out_buffer, const BufferDesc& d
 		nullptr,
 		IID_PPV_ARGS(out_buffer->resource.put())));
     out_buffer->resource->SetName(desc.name);
-
 
     if (desc.flags & BUFFER_FLAG_SRV)
     {
@@ -417,6 +487,9 @@ static void CreateBuffer(Render* render, Buffer* out_buffer, const BufferDesc& d
         uavDesc.Buffer.Flags = uavFlags;
         render->device->CreateUnorderedAccessView(out_buffer->resource.get(), nullptr, &uavDesc, handle);
     }
+
+    out_buffer->addressRange.SizeInBytes = size;
+    out_buffer->addressRange.StartAddress = out_buffer->resource->GetGPUVirtualAddress();
 }
 
 static void OpenFileForLoading(Render* render, LPCWSTR fileName, com_ptr<IDStorageFile>& file, UINT32& size)
@@ -491,6 +564,9 @@ void Destroy(Render* render)
 
 void Initialize(Render* render, HWND hwnd)
 {
+    //UUID GPUWorkGraphExperimentalFeatures[2] = { D3D12ExperimentalShaderModels, D3D12StateObjectsExperiment };
+    //check_hresult(D3D12EnableExperimentalFeatures(_countof(GPUWorkGraphExperimentalFeatures), GPUWorkGraphExperimentalFeatures, nullptr, nullptr));
+
     UINT dxgiFactoryFlags = 0;
 #if defined(_DEBUG)
     {
@@ -514,16 +590,15 @@ void Initialize(Render* render, HWND hwnd)
     {
         com_ptr<IDXGIFactory4> initialFactory;
         check_hresult(CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&initialFactory)));
-
         check_hresult(initialFactory->QueryInterface(IID_PPV_ARGS(render->dxgiFactory.put())));
     }
 
-    bool useWarpDevice = false;
+    bool useWarpDevice = true;
     if (useWarpDevice)
     {
-        com_ptr<IDXGIAdapter3> warpAdapter;
+        com_ptr<IDXGIAdapter4> warpAdapter;
         check_hresult(render->dxgiFactory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter)));
-        check_hresult(D3D12CreateDevice(warpAdapter.get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(render->device.put())));
+        check_hresult(D3D12CreateDevice(warpAdapter.get(), D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(render->device.put())));
     }
     else
     {
@@ -531,6 +606,12 @@ void Initialize(Render* render, HWND hwnd)
         GetHardwareAdapter(render->dxgiFactory.get(), hardwareAdapter.put());
         check_hresult(D3D12CreateDevice(hardwareAdapter.get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(render->device.put())));
     }
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS21 Options = {};
+    render->device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS21, &Options, sizeof(Options));
+    check_bool(Options.WorkGraphsTier != D3D12_WORK_GRAPHS_TIER_NOT_SUPPORTED);
+
+    CompileShaders(render);
 
     {
         DSTORAGE_CONFIGURATION dsConfig{};
@@ -600,6 +681,7 @@ void Initialize(Render* render, HWND hwnd)
             render->device->CreateRenderTargetView(render->backBuffers[n].get(), nullptr, render->backBufferRTVs[n]);
         
             check_hresult(render->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(render->commandAllocators[n].put())));
+            render->commandAllocators[n]->SetName(L"Main CommandAllocator");
         }
 
         // VBuffer
@@ -807,6 +889,12 @@ void Initialize(Render* render, HWND hwnd)
         .WithName(L"MaterialsBuffer")
         .WithSRV(MATERIAL_BUFFER_SRV));
 
+    CreateBuffer(render, &render->workGraphBuffer,
+        BufferDesc(16 * 1024 * 1024 / sizeof(uint), sizeof(uint))
+        .WithName(L"WorkGraphBuffer")
+        .WithUAV(WORK_GRAPH_UAV)
+        .WithRAW());
+
     /*
      * Intermediate buffers
      */
@@ -1002,7 +1090,49 @@ void Initialize(Render* render, HWND hwnd)
         free(materialComputeShader.data);
     }
 
+    /*
+    * Work Graph
+    */
+    {
+        CD3DX12_STATE_OBJECT_DESC desc(D3D12_STATE_OBJECT_TYPE_EXECUTABLE);
+
+        CD3DX12_GLOBAL_ROOT_SIGNATURE_SUBOBJECT* rootSigDesc = desc.CreateSubobject<CD3DX12_GLOBAL_ROOT_SIGNATURE_SUBOBJECT>();
+        rootSigDesc->SetRootSignature(render->drawRootSignature.get());
+        
+        CD3DX12_DXIL_LIBRARY_SUBOBJECT* libraryDesc = desc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
+        CD3DX12_SHADER_BYTECODE libraryCode(render->workGraphBlob.get());
+        libraryDesc->SetDXILLibrary(&libraryCode);
+
+        CD3DX12_WORK_GRAPH_SUBOBJECT* WorkGraphDesc = desc.CreateSubobject<CD3DX12_WORK_GRAPH_SUBOBJECT>();
+        WorkGraphDesc->IncludeAllAvailableNodes();
+        WorkGraphDesc->SetProgramName(L"HelloWorkGraph");
+
+        check_hresult(render->device->CreateStateObject(desc, IID_PPV_ARGS(render->workGraphSO.put())));
+
+        ID3D12StateObject* so = render->workGraphSO.get();
+
+        ID3D12StateObjectProperties1* workGraphSOProps;
+        so->QueryInterface(
+            __uuidof(**(&workGraphSOProps)),
+            IID_PPV_ARGS_Helper(&workGraphSOProps));
+
+        render->workGraphIdentifier = workGraphSOProps->GetProgramIdentifier(L"HelloWorkGraph");
+
+        ID3D12WorkGraphProperties* workGraphProps;
+        so->QueryInterface(
+            __uuidof(**(&workGraphProps)),
+            IID_PPV_ARGS_Helper(&workGraphProps));
+
+        UINT workGraphIndex = workGraphProps->GetWorkGraphIndex(L"HelloWorkGraph");
+        
+        D3D12_WORK_GRAPH_MEMORY_REQUIREMENTS memReqs = {};
+        workGraphProps->GetWorkGraphMemoryRequirements(workGraphIndex, &memReqs);
+
+        CreateBuffer(render, &render->workGraphBackingMemory, BufferDesc(memReqs.MaxSizeInBytes, 1).WithName(L"WorkGraphBackingMemory"));
+    }
+
     check_hresult(render->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, render->commandAllocators[render->frameIndex].get(), nullptr, IID_PPV_ARGS(render->commandList.put())));
+    render->commandList->SetName(L"Main CommandList");
     check_hresult(render->commandList->Close());
 
     /*
@@ -1351,6 +1481,42 @@ void Draw(Render* render)
         render->uniHeap.get(),
     };
     render->commandList->SetDescriptorHeaps(_countof(heaps), heaps);
+
+    // Work Graph execution
+    {
+        render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
+
+        D3D12_SET_PROGRAM_DESC setProg = {};
+        setProg.Type = D3D12_PROGRAM_TYPE_WORK_GRAPH;
+        setProg.WorkGraph.ProgramIdentifier = render->workGraphIdentifier;
+        setProg.WorkGraph.Flags = D3D12_SET_WORK_GRAPH_FLAG_INITIALIZE;
+        setProg.WorkGraph.BackingMemory = render->workGraphBackingMemory.addressRange;
+        render->commandList->SetProgram(&setProg);
+
+        // Generate graph inputs
+        struct entryRecord // equivalent to the definition in HLSL code
+        {
+            UINT gridSize; // : SV_DispatchGrid;
+            UINT recordIndex;
+        };
+        std::vector<entryRecord> inputData;
+        UINT numRecords = 4;
+        inputData.resize(numRecords);
+        for (UINT recordIndex = 0; recordIndex < numRecords; recordIndex++)
+        {
+            inputData[recordIndex].gridSize = recordIndex + 1;
+            inputData[recordIndex].recordIndex = recordIndex;
+        }
+
+        // Spawn work
+        D3D12_DISPATCH_GRAPH_DESC desc = {};
+        desc.Mode = D3D12_DISPATCH_MODE_NODE_CPU_INPUT;
+        desc.NodeCPUInput.EntrypointIndex = 0; // just one entrypoint in this graph
+        desc.NodeCPUInput.NumRecords = numRecords;
+        desc.NodeCPUInput.RecordStrideInBytes = sizeof(entryRecord);
+        desc.NodeCPUInput.pRecords = inputData.data();
+        render->commandList->DispatchGraph(&desc);
+    }
 
     render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
     render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
