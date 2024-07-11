@@ -3,7 +3,7 @@
 
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
-#include "meshopt.h"
+#include "meshoptimizer.h"
 
 #include <vector>
 

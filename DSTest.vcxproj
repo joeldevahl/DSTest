@@ -74,15 +74,19 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);external/imgui;external/imgui/backends;external/meshoptimizer/src;external/cgltf</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);external/imgui;external/imgui/backends;external/meshoptimizer/src;external/cgltf</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);external/imgui;external/imgui/backends;external/meshoptimizer/src;external/cgltf</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);external/imgui;external/imgui/backends;external/meshoptimizer/src;external/cgltf</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -148,13 +152,29 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="external\imgui\backends\imgui_impl_dx12.cpp" />
+    <ClCompile Include="external\imgui\backends\imgui_impl_win32.cpp" />
+    <ClCompile Include="external\imgui\imgui.cpp" />
+    <ClCompile Include="external\imgui\imgui_draw.cpp" />
+    <ClCompile Include="external\imgui\imgui_tables.cpp" />
+    <ClCompile Include="external\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\allocator.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\clusterizer.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\indexcodec.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\indexgenerator.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\overdrawanalyzer.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\overdrawoptimizer.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\quantization.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\simplifier.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\spatialorder.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\stripifier.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\vcacheanalyzer.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\vcacheoptimizer.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\vertexcodec.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\vertexfilter.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\vfetchanalyzer.cpp" />
+    <ClCompile Include="external\meshoptimizer\src\vfetchoptimizer.cpp" />
     <ClCompile Include="Generator.cpp" />
-    <ClCompile Include="imgui.cpp" />
-    <ClCompile Include="imgui_draw.cpp" />
-    <ClCompile Include="imgui_impl_dx12.cpp" />
-    <ClCompile Include="imgui_impl_win32.cpp" />
-    <ClCompile Include="imgui_tables.cpp" />
-    <ClCompile Include="imgui_widgets.cpp" />
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="Render.cpp" />
   </ItemGroup>
@@ -220,16 +240,17 @@
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="external\cgltf\cgltf.h" />
+    <ClInclude Include="external\imgui\backends\imgui_impl_dx12.h" />
+    <ClInclude Include="external\imgui\backends\imgui_impl_win32.h" />
+    <ClInclude Include="external\imgui\imconfig.h" />
+    <ClInclude Include="external\imgui\imgui.h" />
+    <ClInclude Include="external\imgui\imgui_internal.h" />
+    <ClInclude Include="external\imgui\imstb_rectpack.h" />
+    <ClInclude Include="external\imgui\imstb_textedit.h" />
+    <ClInclude Include="external\imgui\imstb_truetype.h" />
+    <ClInclude Include="external\meshoptimizer\src\meshoptimizer.h" />
     <ClInclude Include="Generator.h" />
-    <ClInclude Include="imconfig.h" />
-    <ClInclude Include="imgui.h" />
-    <ClInclude Include="imgui_impl_dx12.h" />
-    <ClInclude Include="imgui_impl_win32.h" />
-    <ClInclude Include="imgui_internal.h" />
-    <ClInclude Include="imstb_rectpack.h" />
-    <ClInclude Include="imstb_textedit.h" />
-    <ClInclude Include="imstb_truetype.h" />
-    <ClInclude Include="meshopt.h" />
     <ClInclude Include="Render.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
