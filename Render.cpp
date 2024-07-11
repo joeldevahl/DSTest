@@ -21,7 +21,7 @@ using winrt::check_bool;
 
 #define NUM_QUEUED_FRAMES 3
 
-extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 613; }
+extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 614; }
 extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = u8".\\D3D12\\"; }
 
 enum class RenderTargets : int
