@@ -1,8 +1,5 @@
 #include "ShaderCommon.hlsl"
 
-//#define DEBUG_VISIBILITY_BUFFER
-//#define DEBUG_DEPTH_BUFFER
-
 #define Pi 3.14159265359f
 
 float3 Fresnel(in float3 specAlbedo, in float3 h, in float3 l)
@@ -100,6 +97,22 @@ float3 TransformVertex(float3 v, float4x4 ModelMatrix, float4x4 ViewMatrix)
 	return wv.xyz / wv.w;
 }
 
+uint HashInt(uint x)
+{
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = (x >> 16) ^ x;
+    return x;
+}
+
+float4 DebugColor(uint input)
+{
+    uint hash = HashInt(input);
+    
+    return float4((hash & 127) / 127.0f, (hash & 16383) / 16383.0f, (hash & 2097151) / 2097151.0f, 1.0f);
+
+}
+
 [numthreads(8, 8, 1)]
 void main(uint2 dtid : SV_DispatchThreadID)
 {
@@ -108,82 +121,159 @@ void main(uint2 dtid : SV_DispatchThreadID)
 	Texture2D<uint> vBuffer = ResourceDescriptorHeap[VBUFFER_SRV];
 	Texture2D<float> depthBuffer = ResourceDescriptorHeap[DEPTHBUFFER_SRV];
 	RWTexture2D<float4> colorBuffer = ResourceDescriptorHeap[COLORBUFFER_UAV];
+	
+    if (constants.DebugMode == DEBUG_MODE_SHOW_TRIANGLES)
+    {
+        float d = depthBuffer[dtid];
+        if (d >= 1.0f)
+        {
+            colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
+            return;
+        }
+        
+        uint v = vBuffer[dtid];
+        uint primitiveIndex = v & 0x000000FF;
+        colorBuffer[dtid] = DebugColor(primitiveIndex);
+    }
+    else if (constants.DebugMode == DEBUG_MODE_SHOW_CLUSTERS)
+    {
+        float d = depthBuffer[dtid];
+        if (d >= 1.0f)
+        {
+            colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
+            return;
+        }
+        
+        uint v = vBuffer[dtid];
+        uint primitiveIndex = v & 0x000000FF;
+        uint visibleClusterIndex = v >> 8;
 
-#if defined(DEBUG_VISIBILITY_BUFFER)
-	uint v = vBuffer[dtid];
-	uint primitiveIndex = v & 0x000000FF;
-	uint visibleClusterIndex = v >> 8;
-	colorBuffer[dtid] = float4(primitiveIndex / 123.0f, 0.0f, 0.0f, 1.0f);
+        uint c = visibleClusters.Load(visibleClusterIndex * 4);
+        uint clusterIndex = c & 0x0000ffff;
+		
+        uint visibleInstanceIndex = c >> 16;
 
-#elif defined(DEBUG_DEPTH_BUFFER)
-	float d = depthBuffer[dtid];
+        uint instanceIndex = visibleInstances.Load(visibleInstanceIndex * 4);
+		
+        colorBuffer[dtid] = DebugColor(clusterIndex);
+    }
+    else if (constants.DebugMode == DEBUG_MODE_SHOW_INSTANCES)
+    {
+        float d = depthBuffer[dtid];
+        if (d >= 1.0f)
+        {
+            colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
+            return;
+        }
+        
+        uint v = vBuffer[dtid];
+        uint primitiveIndex = v & 0x000000FF;
+        uint visibleClusterIndex = v >> 8;
 
-	float2 uv = dtid * float2(1.0f / 1280.0f, 1.0f / 720.0f);
-	float3 wp = ReprojectDepth(d, uv);
+        uint c = visibleClusters.Load(visibleClusterIndex * 4);
+        uint clusterIndex = c & 0x0000ffff;
+		
+        uint visibleInstanceIndex = c >> 16;
 
-	float3 a = abs(wp) - abs(floor(wp));
-	float3 col = float3(
+        uint instanceIndex = visibleInstances.Load(visibleInstanceIndex * 4);
+		
+        colorBuffer[dtid] = DebugColor(instanceIndex);
+    }
+    else if (constants.DebugMode == DEBUG_MODE_SHOW_MATERIALS)
+    {
+        float d = depthBuffer[dtid];
+        if (d >= 1.0f)
+        {
+            colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
+            return;
+        }
+        
+        uint v = vBuffer[dtid];
+        uint primitiveIndex = v & 0x000000FF;
+        uint visibleClusterIndex = v >> 8;
+
+        uint c = visibleClusters.Load(visibleClusterIndex * 4);
+        uint clusterIndex = c & 0x0000ffff;
+		
+        uint visibleInstanceIndex = c >> 16;
+
+        uint instanceIndex = visibleInstances.Load(visibleInstanceIndex * 4);
+        
+        Instance instance = GetInstance(instanceIndex);
+        
+        colorBuffer[dtid] = DebugColor(instance.MaterialIndex);
+    }
+    else if (constants.DebugMode == DEBUG_MODE_SHOW_DEPTH_BUFFER)
+    {
+        float d = depthBuffer[dtid];
+
+        float2 uv = dtid * float2(1.0f / 1280.0f, 1.0f / 720.0f);
+        float3 wp = ReprojectDepth(d, uv);
+
+        float3 a = abs(wp) - abs(floor(wp));
+        float3 col = float3(
 		a.x < 0.01f ? 1.0f : 0.0f,
 		a.y < 0.01f ? 1.0f : 0.0f,
 		a.z < 0.01f ? 1.0f : 0.0f);
 
-	colorBuffer[dtid] = float4(a, 1.0f);
+        colorBuffer[dtid] = float4(a, 1.0f);
+    }
+	else
+    {
+        float d = depthBuffer[dtid];
+        if (d >= 1.0f)
+        {
+            colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
+            return;
+        }
 
-#else
-	float d = depthBuffer[dtid];
-	if (d >= 1.0f)
-	{
-		colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
-		return;
-	}
+        uint v = vBuffer[dtid];
+        uint primitiveIndex = v & 0x000000FF;
+        uint visibleClusterIndex = v >> 8;
 
-	uint v = vBuffer[dtid];
-	uint primitiveIndex = v & 0x000000FF;
-	uint visibleClusterIndex = v >> 8;
+        uint c = visibleClusters.Load(visibleClusterIndex * 4);
+        uint clusterIndex = c & 0x0000ffff;
+        uint visibleInstanceIndex = c >> 16;
 
-	uint c = visibleClusters.Load(visibleClusterIndex * 4);
-    uint clusterIndex = c & 0x0000ffff;
-    uint visibleInstanceIndex = c >> 16;
+        uint instanceIndex = visibleInstances.Load(visibleInstanceIndex * 4);
 
-    uint instanceIndex = visibleInstances.Load(visibleInstanceIndex * 4);
+        Instance instance = GetInstance(instanceIndex);
+        Cluster cluster = GetCluster(clusterIndex);
+        uint3 tri = GetTri(cluster.PrimitiveStart + primitiveIndex);
+        float3 v0 = GetPosition(cluster.VertexStart + tri.x);
+        float3 v1 = GetPosition(cluster.VertexStart + tri.y);
+        float3 v2 = GetPosition(cluster.VertexStart + tri.z);
 
-	Instance instance = GetInstance(instanceIndex);
-	Cluster cluster = GetCluster(clusterIndex);
-	uint3 tri = GetTri(cluster.PrimitiveStart + primitiveIndex);
-	float3 v0 = GetPosition(cluster.VertexStart + tri.x);
-	float3 v1 = GetPosition(cluster.VertexStart + tri.y);
-	float3 v2 = GetPosition(cluster.VertexStart + tri.z);
+        float2 uv = dtid * float2(1.0f / 1280.0f, 1.0f / 720.0f);
+        float3 vp = ReprojectDepth(d, uv);
 
-	float2 uv = dtid * float2(1.0f / 1280.0f, 1.0f / 720.0f);
-	float3 vp = ReprojectDepth(d, uv);
+        float3 vv0 = TransformVertex(v0, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
+        float3 vv1 = TransformVertex(v1, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
+        float3 vv2 = TransformVertex(v2, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
 
-	float3 vv0 = TransformVertex(v0, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
-	float3 vv1 = TransformVertex(v1, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
-	float3 vv2 = TransformVertex(v2, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
+        float3 b = Barycentric(vp, vv0, vv1, vv2);
 
-	float3 b = Barycentric(vp, vv0, vv1, vv2);
+        float3 n0 = GetNormal(cluster.VertexStart + tri.x);
+        float3 n1 = GetNormal(cluster.VertexStart + tri.y);
+        float3 n2 = GetNormal(cluster.VertexStart + tri.z);
 
-	float3 n0 = GetNormal(cluster.VertexStart + tri.x);
-	float3 n1 = GetNormal(cluster.VertexStart + tri.y);
-	float3 n2 = GetNormal(cluster.VertexStart + tri.z);
+        float3 n = n0 * b.x + n1 * b.y + n2 * b.z;
+        float3 p = vv0 * b.x + vv1 + b.y + vv2 * b.z;
 
-	float3 n = n0 * b.x + n1 * b.y + n2 * b.z;
-	float3 p = vv0 * b.x + vv1 + b.y + vv2 * b.z;
+        float3 l = normalize(float3(10.0f, 10.0f, 10.0f));
 
-	float3 l = normalize(float3(10.0f, 10.0f, 10.0f));
+        Material material = GetMaterial(instance.MaterialIndex);
 
-    Material material = GetMaterial(instance.MaterialIndex);
-
-	float3 color = CalcLighting(
+        float3 color = CalcLighting(
 		n,
 		l,
 		float3(1.0f, 1.0f, 1.0f),
-		material.Color,
-		material.Color,
+		material.Color.xyz,
+		material.Color.zyz,
 		material.Roughness,
 		p,
 		float3(0.0f, 0.0f, 0.0f),
 		float3(1.0f, 1.0f, 1.0f));
-	colorBuffer[dtid] = float4(color, 1.0f);
-#endif
+        colorBuffer[dtid] = float4(color, 1.0f);
+    }
 }

@@ -265,6 +265,8 @@ struct Render
     double lastTime;
 
     WireContainer wireContainer[NUM_QUEUED_FRAMES];
+
+    int displayMode = DEBUG_MODE_NONE;
 };
 
 struct handle_closer
@@ -1305,8 +1307,8 @@ void Draw(Render* render)
     render->constantBufferData.Counts.y = render->maxNumClusters;
     render->constantBufferData.Counts.z = 0;
     render->constantBufferData.Counts.w = 0;
+    render->constantBufferData.DebugMode = render->displayMode;
     memcpy(render->cbvDataBegin + sizeof(Constants) * render->frameIndex, &render->constantBufferData, sizeof(render->constantBufferData));
-
 
     // Debug visualization
     {
@@ -1429,6 +1431,8 @@ void Draw(Render* render)
     ImGui::Begin("Hello, world!", nullptr, windowFlags);
     ImGui::Text("Instances: %d (of %d)", numInstancesPassedCulling, render->numInstances);
     ImGui::Text("Clusters: %d (of %d)", numClustersPassedCulling, render->numClusters);
+    const char* items[] = { "Normal", "Show Triangles", "Show Clusters", "Show Instances", "Show Materials", "Show Depth Buffer" };
+    ImGui::Combo("Display Mode", &render->displayMode, items, IM_ARRAYSIZE(items));
     ImGui::Checkbox("Fast Move", &fastMove);
     ImGui::Checkbox("Locked Culling Camera", &lockedCullingCamera);
     ImGui::Checkbox("Vizualize Instances", &visualizeInstances);

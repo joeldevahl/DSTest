@@ -25,6 +25,14 @@
 
 #define MAX_ELEMENTS 65535
 
+// Debug Mode
+#define DEBUG_MODE_NONE 0
+#define DEBUG_MODE_SHOW_TRIANGLES 1
+#define DEBUG_MODE_SHOW_CLUSTERS 2
+#define DEBUG_MODE_SHOW_INSTANCES 3
+#define DEBUG_MODE_SHOW_MATERIALS 4
+#define DEBUG_MODE_SHOW_DEPTH_BUFFER 5
+
 struct MinMaxAABB
 {
     float3 Min;
@@ -51,6 +59,10 @@ CB_ALIGN struct Constants
     Camera CullingCamera;
     Camera DrawingCamera;
     uint4 Counts;
+    uint DebugMode;
+    uint Padding0;
+    uint Padding1;
+    uint Padding2;
 };
 
 struct Instance
