@@ -286,6 +286,14 @@ void Generate(const char* filename, const char* filenameBin)
 		out_materials.push_back(Material{ color, metallic, roughness });
 	}
 
+	if (data->materials_count == 0)
+	{
+		float4 color = { 1.0f, 1.0f, 0.0f, 1.0f };
+		float metallic = 0.0f;
+		float roughness = 1.0f;
+		out_materials.push_back(Material{ color, metallic, roughness });
+	}
+
 	assert(data->scene != nullptr);
 
 	for (int n = 0; n < data->scene->nodes_count; ++n)
