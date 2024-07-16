@@ -22,7 +22,7 @@ using winrt::check_bool;
 #define NUM_QUEUED_FRAMES 3
 
 extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 614; }
-extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = u8".\\D3D12\\"; }
+extern "C" { __declspec(dllexport) extern const char8_t* D3D12SDKPath = u8".\\D3D12\\"; }
 
 enum class RenderTargets : int
 {
@@ -1226,10 +1226,12 @@ void Initialize(Render* render, HWND hwnd)
 
 
     render->cullingCamera.projMat = make_float4x4_perspective_field_of_view(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 10000.0f);
-    render->cullingCamera.pitch = 0.0f;
-    render->cullingCamera.yaw = 0.0f;
-    render->cullingCamera.pos = float3(0.0f, 0.0f, 0.0f);
-    render->cullingCamera.viewMat = make_float4x4_translation(render->cullingCamera.pos);
+    render->cullingCamera.pitch = 0.225f;
+    render->cullingCamera.yaw = 3.0f;
+    render->cullingCamera.pos = float3(1.65569758f, -13.3951435f, 22.1915035f);
+    render->cullingCamera.viewMat = make_float4x4_translation(render->cullingCamera.pos)
+        * make_float4x4_rotation_y(render->cullingCamera.yaw)
+        * make_float4x4_rotation_x(render->cullingCamera.pitch);;
     render->drawingCamera = render->cullingCamera;
     render->lastTime = ImGui::GetTime();
 

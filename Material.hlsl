@@ -99,6 +99,7 @@ float3 TransformVertex(float3 v, float4x4 ModelMatrix, float4x4 ViewMatrix)
 
 uint HashInt(uint x)
 {
+    x += 1;
     x = ((x >> 16) ^ x) * 0x45d9f3b;
     x = ((x >> 16) ^ x) * 0x45d9f3b;
     x = (x >> 16) ^ x;
