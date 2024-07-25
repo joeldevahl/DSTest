@@ -10,8 +10,6 @@
 #include <unordered_map>
 #include <algorithm>
 
-#define DEBUG_LOD 5
-
 struct CpuVertex
 {
 	float3 pos;
@@ -107,7 +105,82 @@ static uint64_t PackCluster(int c0, int c1)
 		return (uint64_t)c1 << 32 | (uint64_t)c0;
 }
 
-void Generate(const char* filename, const char* filenameBin)
+#define MAX_CLUSTERS_PER_CANDIDATE 8
+#define PREFERED_CLUSTERS_PER_CANDIDATE 4
+
+struct MergeCandidate
+{
+	int set[MAX_CLUSTERS_PER_CANDIDATE] = { 0 };
+	int count = 0;
+	int score = 0;
+
+	void Push(int c)
+	{
+		assert(count < MAX_CLUSTERS_PER_CANDIDATE);
+		set[count] = c;
+		count += 1;
+	}
+
+	int Pop()
+	{
+		assert(count > 0);
+		count -= 1;
+		return set[count];
+	}
+
+	bool Contains(int c) const
+	{
+		for (int i = 0; i < count; ++i)
+			if (set[i] == c)
+				return true;
+		return false;
+	}
+};
+
+MergeCandidate SelectBestCandidateTree(const MergeCandidate& input, const std::vector<std::pair<int, int>>& sortedAdjacency, const std::unordered_map<uint64_t, int>& clusterAdjacencyMap)
+{
+	// If the limit is hit we end the search
+	if (input.count >= PREFERED_CLUSTERS_PER_CANDIDATE)
+		return input;
+
+	// Go over all remaining possible clusters to add
+	MergeCandidate output = input;
+	for (auto& c : sortedAdjacency)
+	{
+		// If input candidate already contains the cluster it won't get added
+		if (input.Contains(c.first))
+			continue;
+
+		// Go over all input clusters and get the total connectivity score for the selected cluster
+		int score = 0;
+		for (int i = 0; i < input.count; ++i)
+		{
+			auto iter = clusterAdjacencyMap.find(PackCluster(input.set[i], c.first));
+			if (iter != clusterAdjacencyMap.end())
+				score += iter->second;
+		}
+
+		// If there is any score we try to recursively build up a bigger set of clusters
+		if (score > 0)
+		{
+			// Add the candidate to a local copy and accumulate score
+			MergeCandidate candidate = input;
+			candidate.Push(c.first);
+			candidate.score += score;
+
+			// Recursively find the best candidate
+			candidate = SelectBestCandidateTree(candidate, sortedAdjacency, clusterAdjacencyMap);
+
+			// Store the best candidate in the output
+			if (candidate.score > output.score)
+				output = candidate;
+		}
+ 	}
+
+	return output;
+}
+
+void Generate(const char* filename, const char* filenameBin, int outputLod)
 {
 	std::vector<float3> out_positions;
 	std::vector<float3> out_normals;
@@ -312,7 +385,7 @@ void Generate(const char* filename, const char* filenameBin)
 				ilod += 1;
 				assert(ilod < 16); // We can only handle so many steps for now
 
-				// Loop over all meshlets to figur out their external edges
+				// Loop over all meshlets to figure out their external edges
 				for (int ml = 0; ml < prevLod.meshlets.size(); ++ml)
 				{
 					meshopt_Meshlet& meshlet = prevLod.meshlets[ml];
@@ -402,48 +475,24 @@ void Generate(const char* filename, const char* filenameBin)
 				std::vector<std::pair<int, int>> sortedAdjacency(clusterAdjacencyCount.size());
 				std::partial_sort_copy(clusterAdjacencyCount.begin(), clusterAdjacencyCount.end(), sortedAdjacency.begin(), sortedAdjacency.end(), [](std::pair<int, int> l, std::pair<int, int> r) { return l.second > r.second; });
 
-				std::vector<std::vector<int>> mergeLists;
+				std::vector<MergeCandidate> mergeLists;
 				while (sortedAdjacency.size() > 0)
 				{
-					// Take the least connected cluster
-					std::vector<int> clustersToMerge;
-					clustersToMerge.push_back(sortedAdjacency.back().first);
-					sortedAdjacency.pop_back();
+					// Create a new candidate and populate it with the least connected cluster
+					MergeCandidate candidate;
+					candidate.Push(sortedAdjacency.back().first);
 
-					while (clustersToMerge.size() < 4 && sortedAdjacency.size() > 0)
-					{
-						// Go over all clusters to find best match
-						int bestScore = -1;
-						int bestCluster = -1;
-						int bestClusterIndex = -1;
-						for (int ml = sortedAdjacency.size() - 1; ml >= 0; --ml)
-						{
-							auto candidate = sortedAdjacency[ml];
-							int score = 0;
-							for (int i = 0; i < clustersToMerge.size(); ++i)
-							{
-								auto iter = clusterAdjacencyMap.find(PackCluster(clustersToMerge[i], candidate.first));
-								if (iter != clusterAdjacencyMap.end())
-									score += iter->second;
-							}
+					// Get the best possible scoring merge candidate using this specific candidate starting point
+					MergeCandidate output = SelectBestCandidateTree(candidate, sortedAdjacency, clusterAdjacencyMap);
+					mergeLists.push_back(output);
 
-							if (score > bestScore)
-							{
-								bestScore = score;
-								bestCluster = candidate.first;
-								bestClusterIndex = ml;
-							}
-						}
-
-						// If we have a match we add it to the merge list and remove it from getting processed in future iterations
-						if (bestScore != -1 && bestCluster != -1 && bestClusterIndex != -1)
-						{
-							clustersToMerge.push_back(bestCluster);
-							sortedAdjacency.erase(sortedAdjacency.begin() + bestClusterIndex);
-						}
-					}
-
-					mergeLists.push_back(clustersToMerge);
+					// Remove all the selected clusters from future searches
+					std::erase_if(sortedAdjacency, [output](const auto& v) {
+						for (int c = 0; c < output.count; ++c)
+							if (v.first == output.set[c])
+								return true;
+						return false;
+					});
 				}
 
 				if (mergeLists.size() < 10) // TODO: end heuristic
@@ -456,8 +505,9 @@ void Generate(const char* filename, const char* filenameBin)
 				{
 					// Generate a new index list from the selected clusters, generating a merged mesh
 					std::vector<unsigned int> mergedIndices;
-					for (auto ml : l)
+					for(int c = 0; c < l.count; ++c)
 					{
+						int ml = l.set[c];
 						meshopt_Meshlet& meshlet = prevLod.meshlets[ml];
 
 						for (int i = 0; i < 3 * meshlet.triangle_count; ++i)
@@ -469,9 +519,9 @@ void Generate(const char* filename, const char* filenameBin)
 					}
 
 					// Simplify the merged mesh
-					float threshold = 0.1f; // TODO: pick to get down to half the tris and half the clusters
+					float threshold = 0.5f; // TODO: pick to get down to half the tris and half the clusters
 					size_t targetIndexCount = size_t(mergedIndices.size() * threshold);
-					float targetError = 0.005f;
+					float targetError = 1e-2f;
 					unsigned int options = meshopt_SimplifyLockBorder;
 
 					std::vector<unsigned int> simplifiedIndices(mergedIndices.size());
@@ -521,7 +571,7 @@ void Generate(const char* filename, const char* filenameBin)
 			}
 
 			{
-				MeshletLodLevel& lod = context.lods.at(DEBUG_LOD);
+				MeshletLodLevel& lod = context.lods.at(std::min(outputLod, (int)context.lods.size() - 1));
 				for (int ml = 0; ml < lod.meshlets.size(); ++ml)
 				{
 					meshopt_Meshlet& meshlet = lod.meshlets[ml];

@@ -46,6 +46,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
 
     char* generatorFileName = nullptr;
     char* generatorFileNameBin = nullptr;
+    int generatorLod = 0;
 
     int numArgs = 0;
     LPWSTR* args = CommandLineToArgvW(lpCmdLine, &numArgs);
@@ -78,6 +79,15 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
 
                 wcstombs(generatorFileNameBin, args[ia], numBytes);
             }
+            else if (wcscmp(args[ia], L"-lod") == 0)
+            {
+                ia += 1;
+
+                if (ia >= numArgs)
+                    return -1;
+
+                generatorLod = _wtoi(args[ia]);
+            }
 
             ia += 1;
         }
@@ -97,7 +107,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
     AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
     if (generatorFileName)
-        Generate(generatorFileName, generatorFileNameBin);
+        Generate(generatorFileName, generatorFileNameBin, generatorLod);
     
     Render* render = CreateRender(width, height);
 
