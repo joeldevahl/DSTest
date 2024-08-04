@@ -20,10 +20,10 @@ struct CpuVertex
 
 struct MeshletLodLevel
 {
-	// input data from mesh optimizer
-	std::vector<meshopt_Meshlet> meshlets;
-	std::vector<unsigned int> meshletVertices;
-	std::vector<unsigned char> meshletTriangles;
+
+
+	// data from metis
+	std::vector<std::vector<uint32_t>> clustersIndices;
 
 	std::vector<std::unordered_set<uint64_t>> edgeSets;
 };
@@ -174,14 +174,100 @@ MergeCandidate SelectBestCandidateTree(const MergeCandidate& input, const std::v
 			// Store the best candidate in the output
 			if (candidate.score > output.score)
 				output = candidate;
-		}
+		} 
  	}
 
 	return output;
 }
 
+typedef int32_t idx_t;
+typedef float real_t;
+
+typedef int (__stdcall *METIS_PartMeshDual_func)(idx_t* ne, idx_t* nn, idx_t* eptr, idx_t* eind,
+	idx_t* vwgt, idx_t* vsize, idx_t* ncommon, idx_t* nparts,
+	real_t* tpwgts, idx_t* options, idx_t* objval, idx_t* epart,
+	idx_t* npart);
+
+static METIS_PartMeshDual_func METIS_PartMeshDual = nullptr;
+
+void GenerateClusters(std::vector<std::vector<uint32_t>>& outputClustersIndices, const std::vector<uint32_t>& inputIndices, uint32_t maxTriangles, uint32_t maxVertices)
+{
+	idx_t numElements = inputIndices.size() / 3;
+	idx_t numNodes = inputIndices.size();
+	std::vector<idx_t> eptr(numElements + 1); // TODO: reuse
+	idx_t* eind = (idx_t*)inputIndices.data();
+	idx_t numCommon = 1;
+	std::vector<idx_t> epart(numElements); // TODO: reuse
+	std::vector<idx_t> npart(numNodes); // TODO: reuse
+
+	for (int i = 0; i < eptr.size(); ++i)
+		eptr[i] = i * 3;
+
+	bool done = false;
+	idx_t numParts = std::max<idx_t>(numElements / maxTriangles, 1); // Stupid initial etimate
+	while (!done) 
+	{
+		if (numParts > 1)
+		{
+			idx_t objval = 0;
+			int ret = METIS_PartMeshDual(&numElements, &numNodes, eptr.data(), eind, NULL, NULL, &numCommon, &numParts, NULL, NULL, &objval, epart.data(), npart.data());
+		}
+		else
+		{
+			std::fill(epart.begin(), epart.end(), 0);
+			std::fill(npart.begin(), npart.end(), 0);
+		}
+
+		std::vector<idx_t> clusterElemCounter(numParts); // TODO: reuse
+		std::vector<idx_t> clusterNodeCounter(numParts); // TODO: reuse
+		idx_t maxElemCount = 0;
+		idx_t maxNodeCount = 0;
+		for (int ei = 0; ei < epart.size(); ++ei)
+		{
+			idx_t e = epart[ei];
+			clusterElemCounter[e] += 1;
+			maxElemCount = std::max(maxElemCount, clusterElemCounter[e]);
+		}
+		for (int ni = 0; ni < npart.size(); ++ni)
+		{
+			idx_t n = npart[ni];
+
+			if (n < numParts && n >= 0)
+			{
+				clusterNodeCounter[n] += 1;
+				maxNodeCount = std::max(maxNodeCount, clusterNodeCounter[n]);
+			}
+			else
+			{
+				//TODO: figure out why n can be negative here
+				//__debugbreak();
+			}
+		}
+
+		// If we hit max tri/vert count we need to run again but with more partitions
+		if (maxElemCount < maxTriangles && maxNodeCount < maxVertices)
+			done = true;
+		else
+			numParts += std::max(1, numParts / 10);
+	}
+
+	uint32_t clusterOffset = outputClustersIndices.size();
+	outputClustersIndices.resize(clusterOffset + numParts);
+	for (int ei = 0; ei < epart.size(); ++ei)
+	{
+		idx_t clusterIndex = clusterOffset + epart[ei];
+		idx_t indexOffset = eptr[ei];
+		outputClustersIndices[clusterIndex].push_back(inputIndices[indexOffset + 0]);
+		outputClustersIndices[clusterIndex].push_back(inputIndices[indexOffset + 2]);
+		outputClustersIndices[clusterIndex].push_back(inputIndices[indexOffset + 1]);
+	}
+}
+
 void Generate(const char* filename, const char* filenameBin, int outputLod)
 {
+	HMODULE metisDll = LoadLibrary(L"metis.dll");
+	METIS_PartMeshDual = (METIS_PartMeshDual_func)GetProcAddress(metisDll, "METIS_PartMeshDual");
+
 	std::vector<float3> out_positions;
 	std::vector<float3> out_normals;
 	std::vector<float4> out_tangents;
@@ -332,6 +418,7 @@ void Generate(const char* filename, const char* filenameBin, int outputLod)
 
 			// Start mesh optimization
 			MeshletGeneratorContext context;
+			if (0)
 			{
 				size_t index_count = temp_indices.size();
 				std::vector<unsigned int> remap(index_count);
@@ -345,67 +432,49 @@ void Generate(const char* filename, const char* filenameBin, int outputLod)
 				meshopt_optimizeOverdraw(context.indices.data(), context.indices.data(), index_count, (float*)context.vertices.data(), vertex_count, sizeof(CpuVertex), 1.05f);
 				meshopt_optimizeVertexFetch(context.vertices.data(), context.indices.data(), index_count, context.vertices.data(), vertex_count, sizeof(CpuVertex));
 			}
+			else
+			{
+				context.vertices = temp_vertices;
+				context.indices = temp_indices;
+			}
 
 			// Start clustering
-			const size_t max_vertices = 64;
-			const size_t max_triangles = 124;
-			const float cone_weight = 0.0f;
+			const size_t maxVertices = 64;
+			const size_t maxTriangles = 124;
+
 			{
 				context.lods.reserve(16); // Just in case.
 				MeshletLodLevel& lod0 = context.lods.emplace_back();
-
-				{
-					// Do initial clustering
-					size_t max_meshlets = meshopt_buildMeshletsBound(context.indices.size(), max_vertices, max_triangles);
-					lod0.meshlets.resize(max_meshlets);
-					lod0.meshletVertices.resize(max_meshlets * max_vertices);
-					lod0.meshletTriangles.resize(max_meshlets * max_triangles * 3);
-					lod0.meshlets.resize(meshopt_buildMeshlets(lod0.meshlets.data(),
-						lod0.meshletVertices.data(),
-						lod0.meshletTriangles.data(),
-						context.indices.data(),
-						context.indices.size(),
-						(float*)context.vertices.data(),
-						context.vertices.size(),
-						sizeof(CpuVertex),
-						max_vertices, max_triangles, cone_weight));
-
-					const meshopt_Meshlet& last = lod0.meshlets[lod0.meshlets.size() - 1];
-					lod0.meshletVertices.resize(last.vertex_offset + last.vertex_count);
-					lod0.meshletTriangles.resize(last.triangle_offset + ((last.triangle_count * 3 + 3) & ~3));
-					lod0.edgeSets.resize(lod0.meshlets.size());
-				}
+				GenerateClusters(lod0.clustersIndices, context.indices, maxTriangles, maxVertices);
+				lod0.edgeSets.resize(lod0.clustersIndices.size());
 			}
+
 
 			bool done = false;
 			int ilod = 0;
-			while (!done)
+			while (!done && ilod < outputLod)
 			{
 				auto& prevLod = context.lods.at(ilod);
 				ilod += 1;
 				assert(ilod < 16); // We can only handle so many steps for now
 
 				// Loop over all meshlets to figure out their external edges
-				for (int ml = 0; ml < prevLod.meshlets.size(); ++ml)
+				for (int ml = 0; ml < prevLod.clustersIndices.size(); ++ml)
 				{
-					meshopt_Meshlet& meshlet = prevLod.meshlets[ml];
+					auto& indices = prevLod.clustersIndices[ml];
 
 					// First loop over all triangles to count the nuber of times each edge occurs
 					std::unordered_map<uint64_t, int> edgeCounterMap;
-					for (int t = 0; t < meshlet.triangle_count; ++t)
+					for (int t = 0; t < indices.size() / 3; ++t)
 					{
-						int o = meshlet.triangle_offset + 3 * t;
-						int i0 = prevLod.meshletTriangles[o + 0];
-						int i1 = prevLod.meshletTriangles[o + 2];
-						int i2 = prevLod.meshletTriangles[o + 1];
+						int o = 3 * t;
+						int i0 = indices[o + 0];
+						int i1 = indices[o + 2];
+						int i2 = indices[o + 1];
 
-						int v0 = prevLod.meshletVertices[meshlet.vertex_offset + i0];
-						int v1 = prevLod.meshletVertices[meshlet.vertex_offset + i1];
-						int v2 = prevLod.meshletVertices[meshlet.vertex_offset + i2];
-
-						uint64_t pe0 = PackEdge(v0, v1);
-						uint64_t pe1 = PackEdge(v0, v2);
-						uint64_t pe2 = PackEdge(v1, v2);
+						uint64_t pe0 = PackEdge(i0, i1);
+						uint64_t pe1 = PackEdge(i0, i2);
+						uint64_t pe2 = PackEdge(i1, i2);
 
 						auto iter0 = edgeCounterMap.find(pe0);
 						if (iter0 != edgeCounterMap.end())
@@ -438,17 +507,17 @@ void Generate(const char* filename, const char* filenameBin, int outputLod)
 
 				// Loop over all meshlets to figure out which ones are connected
 				std::unordered_map<uint64_t, int> clusterAdjacencyMap; // Maps the pair <c0, c1> to common edge count
-				std::vector<std::pair<int, int>> clusterAdjacencyCount(prevLod.meshlets.size()); // Contains the pair <cluster, counter> counting how many neighbours a cluster have
+				std::vector<std::pair<int, int>> clusterAdjacencyCount(prevLod.clustersIndices.size()); // Contains the pair <cluster, counter> counting how many neighbours a cluster have
 				for (int ml = 0; ml < clusterAdjacencyCount.size(); ++ml)
 				{
 					clusterAdjacencyCount[ml].first = ml;
 					clusterAdjacencyCount[ml].second = 0;
 				}
-				for (int ml = 0; ml < prevLod.meshlets.size(); ++ml)
+				for (int ml = 0; ml < prevLod.clustersIndices.size(); ++ml)
 				{
 					auto& edgeSet = prevLod.edgeSets[ml];
 
-					for (int ml_inner = ml + 1; ml_inner < prevLod.meshlets.size(); ++ml_inner)
+					for (int ml_inner = ml + 1; ml_inner < prevLod.clustersIndices.size(); ++ml_inner)
 					{
 						// For each edge test it in the other clusters set
 						auto& edgeSetInner = prevLod.edgeSets[ml_inner];
@@ -508,13 +577,12 @@ void Generate(const char* filename, const char* filenameBin, int outputLod)
 					for(int c = 0; c < l.count; ++c)
 					{
 						int ml = l.set[c];
-						meshopt_Meshlet& meshlet = prevLod.meshlets[ml];
+						auto& indices = prevLod.clustersIndices[ml];
 
-						for (int i = 0; i < 3 * meshlet.triangle_count; ++i)
+						for (int i = 0; i < indices.size(); ++i)
 						{
-							int localIndex = prevLod.meshletTriangles[meshlet.triangle_offset + i];
-							int globalIndex = prevLod.meshletVertices[meshlet.vertex_offset + localIndex];
-							mergedIndices.push_back(globalIndex);
+							int idx = indices[i];
+							mergedIndices.push_back(idx);
 						}
 					}
 
@@ -537,44 +605,26 @@ void Generate(const char* filename, const char* filenameBin, int outputLod)
 						options,
 						&lod_error));
 
-					// Generate new clusters for the new simplified index list
-					size_t max_meshlets = meshopt_buildMeshletsBound(simplifiedIndices.size(), max_vertices, max_triangles);
-
-					// Temp vectors here so we can append things later on
-					std::vector<meshopt_Meshlet> meshlets(max_meshlets);
-					std::vector<unsigned int> meshletVertices(max_meshlets * max_vertices);
-					std::vector<unsigned char> meshletTriangles(max_meshlets * max_triangles * 3);
-
-					// Build actual meshlets
-					meshlets.resize(meshopt_buildMeshlets(meshlets.data(),
-						meshletVertices.data(),
-						meshletTriangles.data(),
-						simplifiedIndices.data(),
-						simplifiedIndices.size(),
-						(float*)context.vertices.data(),
-						context.vertices.size(),
-						sizeof(CpuVertex),
-						max_vertices, max_triangles, cone_weight));
-
-					// Append meshlets into lod array
-					int vo = currLod.meshletVertices.size();
-					int to = currLod.meshletTriangles.size();
-					for (int ml = 0; ml < meshlets.size(); ++ml)
-					{
-						meshopt_Meshlet& meshlet = meshlets[ml];
-						currLod.meshlets.push_back({ meshlet.vertex_offset + vo, meshlet.triangle_offset + to, meshlet.vertex_count, meshlet.triangle_count });
-					}
-					currLod.meshletVertices.insert(currLod.meshletVertices.end(), meshletVertices.begin(), meshletVertices.end());
-					currLod.meshletTriangles.insert(currLod.meshletTriangles.end(), meshletTriangles.begin(), meshletTriangles.end());
+					GenerateClusters(currLod.clustersIndices, mergedIndices, maxTriangles, maxVertices);
 				}
-				currLod.edgeSets.resize(currLod.meshlets.size());
+				currLod.edgeSets.resize(currLod.clustersIndices.size());
 			}
 
 			{
 				MeshletLodLevel& lod = context.lods.at(std::min(outputLod, (int)context.lods.size() - 1));
-				for (int ml = 0; ml < lod.meshlets.size(); ++ml)
+				for (int i = 0; i < lod.clustersIndices.size(); ++i)
 				{
-					meshopt_Meshlet& meshlet = lod.meshlets[ml];
+					auto& indices = lod.clustersIndices[i];
+					size_t indexCount = indices.size();
+					std::vector<unsigned int> remap(context.vertices.size());
+
+					size_t vertexCount = meshopt_generateVertexRemap(remap.data(), indices.data(), indexCount, context.vertices.data(), context.vertices.size(), sizeof(CpuVertex));
+
+					std::vector<CpuVertex> clusterVertices(vertexCount);
+					std::vector<unsigned int> clusterIndices(indexCount);
+
+					meshopt_remapIndexBuffer(clusterIndices.data(), (unsigned int*)indices.data(), indexCount, remap.data());
+					meshopt_remapVertexBuffer(clusterVertices.data(), context.vertices.data(), context.vertices.size(), sizeof(CpuVertex), remap.data());
 
 					UINT outputVerticesOffset = out_positions.size();
 					MinMaxAABB clusterBounds = MinMaxAABB{
@@ -582,10 +632,9 @@ void Generate(const char* filename, const char* filenameBin, int outputLod)
 						float3 {FLT_MIN, FLT_MIN, FLT_MIN},
 					};
 
-					for (int v = 0; v < meshlet.vertex_count; ++v)
+					for (int v = 0; v < vertexCount; ++v)
 					{
-						int vi = lod.meshletVertices[meshlet.vertex_offset + v];
-						CpuVertex& vert = context.vertices[vi];
+						CpuVertex& vert = clusterVertices[v];
 						out_positions.push_back(vert.pos);
 						out_normals.push_back(vert.normal);
 						out_tangents.push_back(vert.tangent);
@@ -596,23 +645,17 @@ void Generate(const char* filename, const char* filenameBin, int outputLod)
 					}
 
 					UINT outputTriangleOffset = out_indices.size() / 3;
-					for (int t = 0; t < meshlet.triangle_count; ++t)
+					UINT triangleCount = indexCount / 3;
+					for (int i = 0; i < indexCount; ++i)
 					{
-						int o = meshlet.triangle_offset + 3 * t;
-						int i0 = lod.meshletTriangles[o + 0];
-						int i1 = lod.meshletTriangles[o + 2];
-						int i2 = lod.meshletTriangles[o + 1];
-
-						out_indices.push_back(i0);
-						out_indices.push_back(i1);
-						out_indices.push_back(i2);
+						out_indices.push_back(clusterIndices[i]);
 					}
 
 					out_clusters.push_back(Cluster{
 						outputTriangleOffset,
-						meshlet.triangle_count,
+						(UINT)indexCount / 3,
 						outputVerticesOffset,
-						meshlet.vertex_count,
+						(UINT)vertexCount,
 						MinMaxToCenterExtents(clusterBounds),
 						});
 

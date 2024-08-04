@@ -7,3 +7,6 @@
 /packages
 /DSTest.vcxproj.user
 *.raw
+/DSTest/x64/Debug
+/DSTest/x64/Release/DSTest.tlog
+/DSTest/x64/Release
