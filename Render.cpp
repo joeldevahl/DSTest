@@ -77,7 +77,7 @@ struct BufferDesc
 struct Buffer
 {
     com_ptr<ID3D12Resource> resource;
-    D3D12_GPU_VIRTUAL_ADDRESS_RANGE addressRange;
+    D3D12_GPU_VIRTUAL_ADDRESS_RANGE addressRange = { 0, 0 };
 };
 
 struct WireContainer
@@ -1129,8 +1129,9 @@ void Initialize(Render* render, HWND hwnd)
         
         D3D12_WORK_GRAPH_MEMORY_REQUIREMENTS memReqs = {};
         workGraphProps->GetWorkGraphMemoryRequirements(workGraphIndex, &memReqs);
-
-        CreateBuffer(render, &render->workGraphBackingMemory, BufferDesc(memReqs.MaxSizeInBytes, 1).WithName(L"WorkGraphBackingMemory"));
+        
+        if(memReqs.MaxSizeInBytes > 0)
+            CreateBuffer(render, &render->workGraphBackingMemory, BufferDesc(memReqs.MaxSizeInBytes, 1).WithName(L"WorkGraphBackingMemory"));
     }
 
     check_hresult(render->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, render->commandAllocators[render->frameIndex].get(), nullptr, IID_PPV_ARGS(render->commandList.put())));
