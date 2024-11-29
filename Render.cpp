@@ -21,7 +21,7 @@ using winrt::check_bool;
 
 #define NUM_QUEUED_FRAMES 3
 
-extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 614; }
+extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 715; }
 extern "C" { __declspec(dllexport) extern const char8_t* D3D12SDKPath = u8".\\D3D12\\"; }
 
 enum class RenderTargets : int
@@ -50,7 +50,8 @@ enum BufferFlags
     BUFFER_FLAG_RAW = 1,
     BUFFER_FLAG_SRV = 2,
     BUFFER_FLAG_UAV = 4,
-    BUFFER_FLAG_CBV = 8,
+    BUFFER_FLAG_UAV_DESCRIPTOR = 8,
+    BUFFER_FLAG_CBV = 16,
 };
 
 struct BufferDesc
@@ -67,7 +68,8 @@ struct BufferDesc
 
     BufferDesc(UINT _count, UINT _stride) : count(_count), stride(_stride) {}
     BufferDesc& WithSRV(UINT offset) { srvDescriptorOffset = offset; flags |= BUFFER_FLAG_SRV; return *this; }
-    BufferDesc& WithUAV(UINT offset) { uavDescriptorOffset = offset; flags |= BUFFER_FLAG_UAV; return *this; }
+    BufferDesc& WithUAV() { flags |= BUFFER_FLAG_UAV; return *this; }
+    BufferDesc& WithUAV(UINT offset) { uavDescriptorOffset = offset; flags |= BUFFER_FLAG_UAV_DESCRIPTOR; return WithUAV(); }
     BufferDesc& WithRAW() { flags |= BUFFER_FLAG_RAW; return *this; }
     BufferDesc& WithHeapType(D3D12_HEAP_TYPE _heapType) { heapType = _heapType; return *this; }
     BufferDesc& WithResourceState(D3D12_RESOURCE_STATES _resrourceStates) { resrourceStates = _resrourceStates; return *this; }
@@ -78,6 +80,7 @@ struct Buffer
 {
     com_ptr<ID3D12Resource> resource;
     D3D12_GPU_VIRTUAL_ADDRESS_RANGE addressRange = { 0, 0 };
+    D3D12_GPU_VIRTUAL_ADDRESS_RANGE_AND_STRIDE addressRangeAndStride = { 0, 0, 0 };
 };
 
 struct WireContainer
@@ -225,6 +228,7 @@ struct Render
     Buffer materialsBuffer;
     Buffer workGraphBuffer;
     Buffer workGraphBackingMemory;
+    Buffer workGraphNodeLocalRootArgumentsTable;
     char* cbvDataBegin;
 
     Instance* instancesCpu;
@@ -278,6 +282,8 @@ struct Render
     int displayMode = DEBUG_MODE_NONE;
 
     com_ptr<ID3DBlob> workGraphBlob;
+    com_ptr<ID3DBlob> psBlob;
+    com_ptr<ID3D12RootSignature> globalRootSignature;
 };
 
 struct handle_closer
@@ -352,7 +358,7 @@ static HRESULT ReadDataFromFile(LPCWSTR filename, byte** data, UINT* size)
     return S_OK;
 }
 
-static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR shader_name, LPCWSTR target)
+static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWSTR shader_name, LPCWSTR target)
 {
     struct
     {
@@ -375,6 +381,12 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR shader_name, LPCW
     arguments.push_back(L"-T");
     arguments.push_back(target);
 
+    if (entry_name)
+    {
+        arguments.push_back(L"-E");
+        arguments.push_back(entry_name);
+    }
+
     arguments.push_back(L"-I");
     arguments.push_back(L"C:/Code/DSTest/");
 
@@ -383,8 +395,11 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR shader_name, LPCW
     sourceBuffer.Size = source->GetBufferSize();
     sourceBuffer.Encoding = 0;
 
+    com_ptr<IDxcIncludeHandler> includeHandler;
+    utils->CreateDefaultIncludeHandler(includeHandler.put());
+
     com_ptr<IDxcResult> compileResult;
-    winrt::hresult result = check_hresult(compiler->Compile(&sourceBuffer, arguments.data(), arguments.size(), nullptr, IID_PPV_ARGS(&compileResult)));
+    winrt::hresult result = check_hresult(compiler->Compile(&sourceBuffer, arguments.data(), arguments.size(), includeHandler.get(), IID_PPV_ARGS(&compileResult)));
 
     // Error Handling. Note that this will also include warnings unless disabled.
     com_ptr<IDxcBlobUtf8> errors;
@@ -407,7 +422,8 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR shader_name, LPCW
 
 static bool CompileShaders(Render* render)
 {
-    render->workGraphBlob = CompileShader(render, L"WorkGraph.hlsl", L"lib_6_8");
+    render->workGraphBlob = CompileShader(render, nullptr, L"WorkGraph.hlsl", L"lib_6_9");
+    render->psBlob = CompileShader(render, L"main", L"VBufferPS.hlsl", L"ps_6_6");
 
     return true;
 }
@@ -469,7 +485,7 @@ static void CreateBuffer(Render* render, Buffer* out_buffer, const BufferDesc& d
         render->device->CreateShaderResourceView(out_buffer->resource.get(), &srvDesc, handle);
     }
 
-    if (desc.flags & BUFFER_FLAG_UAV)
+    if (desc.flags & BUFFER_FLAG_UAV_DESCRIPTOR)
     {
 		CD3DX12_CPU_DESCRIPTOR_HANDLE handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), desc.uavDescriptorOffset, render->uniDescriptorSize);
 		DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
@@ -492,6 +508,10 @@ static void CreateBuffer(Render* render, Buffer* out_buffer, const BufferDesc& d
 
     out_buffer->addressRange.SizeInBytes = size;
     out_buffer->addressRange.StartAddress = out_buffer->resource->GetGPUVirtualAddress();
+
+    out_buffer->addressRangeAndStride.SizeInBytes = size;
+    out_buffer->addressRangeAndStride.StartAddress = out_buffer->resource->GetGPUVirtualAddress();
+    out_buffer->addressRangeAndStride.StrideInBytes = desc.stride;
 }
 
 static void OpenFileForLoading(Render* render, LPCWSTR fileName, com_ptr<IDStorageFile>& file, UINT32& size)
@@ -566,8 +586,8 @@ void Destroy(Render* render)
 
 void Initialize(Render* render, HWND hwnd)
 {
-    //UUID GPUWorkGraphExperimentalFeatures[2] = { D3D12ExperimentalShaderModels, D3D12StateObjectsExperiment };
-    //check_hresult(D3D12EnableExperimentalFeatures(_countof(GPUWorkGraphExperimentalFeatures), GPUWorkGraphExperimentalFeatures, nullptr, nullptr));
+    UUID GPUWorkGraphExperimentalFeatures[2] = { D3D12ExperimentalShaderModels, D3D12StateObjectsExperiment };
+    check_hresult(D3D12EnableExperimentalFeatures(_countof(GPUWorkGraphExperimentalFeatures), GPUWorkGraphExperimentalFeatures, nullptr, nullptr));
 
     UINT dxgiFactoryFlags = 0;
 #if defined(_DEBUG)
@@ -918,7 +938,7 @@ void Initialize(Render* render, HWND hwnd)
         .WithUAV(VISIBLE_INSTANCES_COUNTER_UAV)
         .WithRAW());
     CreateBuffer(render, &render->visibleClustersCounter,
-        BufferDesc(1, 3 * sizeof(UINT))
+        BufferDesc(1, 3 * sizeof(UINT) * 72000)
         .WithName(L"VisibleClustersCounter")
         .WithUAV(VISIBLE_CLUSTERS_COUNTER_UAV)
         .WithRAW());
@@ -1095,43 +1115,86 @@ void Initialize(Render* render, HWND hwnd)
     /*
     * Work Graph
     */
+    if (1)
     {
+        render->device->CreateRootSignatureFromSubobjectInLibrary(0,
+            render->workGraphBlob->GetBufferPointer(),
+            render->workGraphBlob->GetBufferSize(),
+            L"MeshNodesGlobalRS",
+            IID_PPV_ARGS(render->globalRootSignature.put()));
+
         CD3DX12_STATE_OBJECT_DESC desc(D3D12_STATE_OBJECT_TYPE_EXECUTABLE);
 
+        CD3DX12_STATE_OBJECT_CONFIG_SUBOBJECT* config = desc.CreateSubobject<CD3DX12_STATE_OBJECT_CONFIG_SUBOBJECT>();
+        config->SetFlags(D3D12_STATE_OBJECT_FLAG_WORK_GRAPHS_USE_GRAPHICS_STATE_FOR_GLOBAL_ROOT_SIGNATURE);
+
         CD3DX12_GLOBAL_ROOT_SIGNATURE_SUBOBJECT* rootSigDesc = desc.CreateSubobject<CD3DX12_GLOBAL_ROOT_SIGNATURE_SUBOBJECT>();
-        rootSigDesc->SetRootSignature(render->drawRootSignature.get());
+        rootSigDesc->SetRootSignature(render->globalRootSignature.get());
         
         CD3DX12_DXIL_LIBRARY_SUBOBJECT* libraryDesc = desc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
         CD3DX12_SHADER_BYTECODE libraryCode(render->workGraphBlob.get());
         libraryDesc->SetDXILLibrary(&libraryCode);
+        libraryDesc->DefineExport(L"FrameSetup");
+        libraryDesc->DefineExport(L"InstanceCulling");
+        libraryDesc->DefineExport(L"ClusterCulling");
+        libraryDesc->DefineExport(L"MeshNode");
+        libraryDesc->DefineExport(L"MeshNodesLocalRS");
 
-        CD3DX12_WORK_GRAPH_SUBOBJECT* WorkGraphDesc = desc.CreateSubobject<CD3DX12_WORK_GRAPH_SUBOBJECT>();
-        WorkGraphDesc->IncludeAllAvailableNodes();
-        WorkGraphDesc->SetProgramName(L"HelloWorkGraph");
+        CD3DX12_DXIL_LIBRARY_SUBOBJECT* psDesc = desc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
+        CD3DX12_SHADER_BYTECODE psCode(render->psBlob.get());
+        psDesc->SetDXILLibrary(&psCode);
+        psDesc->DefineExport(L"main");
+
+        CD3DX12_DXIL_SUBOBJECT_TO_EXPORTS_ASSOCIATION* localRootSignature = desc.CreateSubobject<CD3DX12_DXIL_SUBOBJECT_TO_EXPORTS_ASSOCIATION>();
+        localRootSignature->SetSubobjectNameToAssociate(L"MeshNodesLocalRS");
+        localRootSignature->AddExport(L"main");
+
+        CD3DX12_PRIMITIVE_TOPOLOGY_SUBOBJECT* primitiveTopology = desc.CreateSubobject<CD3DX12_PRIMITIVE_TOPOLOGY_SUBOBJECT>();
+        primitiveTopology->SetPrimitiveTopologyType(D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE);
+        CD3DX12_RENDER_TARGET_FORMATS_SUBOBJECT* rtFormats = desc.CreateSubobject<CD3DX12_RENDER_TARGET_FORMATS_SUBOBJECT>();
+        rtFormats->SetNumRenderTargets(1);
+        rtFormats->SetRenderTargetFormat(0, DXGI_FORMAT_R32_UINT);
+
+        CD3DX12_GENERIC_PROGRAM_SUBOBJECT* genericProgram = desc.CreateSubobject<CD3DX12_GENERIC_PROGRAM_SUBOBJECT>();
+        genericProgram->SetProgramName(L"myMeshNode0");
+        genericProgram->AddExport(L"MeshNode");
+        genericProgram->AddExport(L"main");
+        genericProgram->AddSubobject(*primitiveTopology);
+        genericProgram->AddSubobject(*rtFormats);
+
+        CD3DX12_WORK_GRAPH_SUBOBJECT* workGraphDesc = desc.CreateSubobject<CD3DX12_WORK_GRAPH_SUBOBJECT>();
+        workGraphDesc->IncludeAllAvailableNodes();
+        workGraphDesc->SetProgramName(L"HelloWorkGraph");
+
+        auto rootNode = workGraphDesc->CreateShaderNode(L"FrameSetup");
+
+        auto meshNode0 = workGraphDesc->CreateCommonProgramNodeOverrides(L"myMeshNode0");
+        meshNode0->NewName({ L"MeshNode", 0 });
+        meshNode0->LocalRootArgumentsTableIndex(0);
 
         check_hresult(render->device->CreateStateObject(desc, IID_PPV_ARGS(render->workGraphSO.put())));
 
         ID3D12StateObject* so = render->workGraphSO.get();
 
-        ID3D12StateObjectProperties1* workGraphSOProps;
-        so->QueryInterface(
-            __uuidof(**(&workGraphSOProps)),
-            IID_PPV_ARGS_Helper(&workGraphSOProps));
+        com_ptr<ID3D12StateObjectProperties1> workGraphSOProps;
+        so->QueryInterface(IID_PPV_ARGS(workGraphSOProps.put()));
 
         render->workGraphIdentifier = workGraphSOProps->GetProgramIdentifier(L"HelloWorkGraph");
 
-        ID3D12WorkGraphProperties* workGraphProps;
-        so->QueryInterface(
-            __uuidof(**(&workGraphProps)),
-            IID_PPV_ARGS_Helper(&workGraphProps));
+        com_ptr<ID3D12WorkGraphProperties1> workGraphProps; 
+        so->QueryInterface(IID_PPV_ARGS(workGraphProps.put()));
 
         UINT workGraphIndex = workGraphProps->GetWorkGraphIndex(L"HelloWorkGraph");
+
+        workGraphProps->SetMaximumInputRecords(workGraphIndex, 1, 1);
         
         D3D12_WORK_GRAPH_MEMORY_REQUIREMENTS memReqs = {};
         workGraphProps->GetWorkGraphMemoryRequirements(workGraphIndex, &memReqs);
         
         if(memReqs.MaxSizeInBytes > 0)
-            CreateBuffer(render, &render->workGraphBackingMemory, BufferDesc(memReqs.MaxSizeInBytes, 1).WithName(L"WorkGraphBackingMemory"));
+            CreateBuffer(render, &render->workGraphBackingMemory, BufferDesc(memReqs.MaxSizeInBytes, 1).WithUAV().WithName(L"WorkGraphBackingMemory"));
+
+        CreateBuffer(render, &render->workGraphNodeLocalRootArgumentsTable, BufferDesc(4, 4).WithName(L"WorkGraphNodeLocalRootArgumentsTable"));
     }
 
     check_hresult(render->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, render->commandAllocators[render->frameIndex].get(), nullptr, IID_PPV_ARGS(render->commandList.put())));
@@ -1328,6 +1391,7 @@ static bool visualizeInstances = false;
 static bool visualizeClusters = false;
 static bool fastMove = false;
 static bool lockedCullingCamera = false;
+static bool workGraph = true;
 
 void Draw(Render* render)
 {
@@ -1488,100 +1552,123 @@ void Draw(Render* render)
     render->commandList->SetDescriptorHeaps(_countof(heaps), heaps);
 
     // Work Graph execution
+    if (workGraph)
     {
-        render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
+        {
+            D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstances.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET),
+            };
+            render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
+
+        render->commandList->SetComputeRootSignature(render->globalRootSignature.get());
+        render->commandList->SetGraphicsRootSignature(render->globalRootSignature.get());
+
+        render->commandList->RSSetViewports(1, &render->viewport);
+        render->commandList->RSSetScissorRects(1, &render->scissorRect);
+        render->commandList->ClearDepthStencilView(render->depthStencilDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        float color[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        render->commandList->ClearRenderTargetView(render->vBufferRTV, color, 0, nullptr);
+        render->commandList->OMSetRenderTargets(1, &render->vBufferRTV, FALSE, &render->depthStencilDSV);
+        render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
+        render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
 
         D3D12_SET_PROGRAM_DESC setProg = {};
         setProg.Type = D3D12_PROGRAM_TYPE_WORK_GRAPH;
         setProg.WorkGraph.ProgramIdentifier = render->workGraphIdentifier;
         setProg.WorkGraph.Flags = D3D12_SET_WORK_GRAPH_FLAG_INITIALIZE;
         setProg.WorkGraph.BackingMemory = render->workGraphBackingMemory.addressRange;
+        setProg.WorkGraph.NodeLocalRootArgumentsTable = render->workGraphNodeLocalRootArgumentsTable.addressRangeAndStride;
         render->commandList->SetProgram(&setProg);
-
-        // Generate graph inputs
-        struct entryRecord // equivalent to the definition in HLSL code
-        {
-            UINT gridSize; // : SV_DispatchGrid;
-            UINT recordIndex;
-        };
-        std::vector<entryRecord> inputData;
-        UINT numRecords = 4;
-        inputData.resize(numRecords);
-        for (UINT recordIndex = 0; recordIndex < numRecords; recordIndex++)
-        {
-            inputData[recordIndex].gridSize = recordIndex + 1;
-            inputData[recordIndex].recordIndex = recordIndex;
-        }
 
         // Spawn work
         D3D12_DISPATCH_GRAPH_DESC desc = {};
         desc.Mode = D3D12_DISPATCH_MODE_NODE_CPU_INPUT;
         desc.NodeCPUInput.EntrypointIndex = 0; // just one entrypoint in this graph
-        desc.NodeCPUInput.NumRecords = numRecords;
-        desc.NodeCPUInput.RecordStrideInBytes = sizeof(entryRecord);
-        desc.NodeCPUInput.pRecords = inputData.data();
+        desc.NodeCPUInput.NumRecords = 1;
+        desc.NodeCPUInput.RecordStrideInBytes = sizeof(Constants);
+        desc.NodeCPUInput.pRecords = &render->constantBufferData;
         render->commandList->DispatchGraph(&desc);
+
+        {
+            D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstances.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+            };
+            render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
     }
-
-    render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
-    render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
-
-    // Setup buffers and counters for the frame
-    render->commandList->SetPipelineState(render->frameSetupPSO.get());
-    render->commandList->Dispatch(1, 1, 1);
-
+    else
     {
-        D3D12_RESOURCE_BARRIER barriers[] = {
-            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
-            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
-        };
-        render->commandList->ResourceBarrier(_countof(barriers), barriers);
-    }
 
-    // Cull instances
-    render->commandList->SetPipelineState(render->instanceCullingPSO.get());
-    render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
+        render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
+        render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
 
-    {
-        D3D12_RESOURCE_BARRIER barriers[] = {
-            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstances.resource.get()),
-            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
-        };
-        render->commandList->ResourceBarrier(_countof(barriers), barriers);
-    }
+        // Setup buffers and counters for the frame
+        render->commandList->SetPipelineState(render->frameSetupPSO.get());
+        render->commandList->Dispatch(1, 1, 1);
 
-    // Cull clusters
-    render->commandList->SetPipelineState(render->clusterCullingPSO.get());
-	render->commandList->Dispatch((render->maxNumClusters + 127) / 128, 1, 1);
+        {
+            D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
+            };
+            render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
 
-    {
-        D3D12_RESOURCE_BARRIER barriers[] = {
-            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
-            CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
-            CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET),
-        };
-        render->commandList->ResourceBarrier(_countof(barriers), barriers);
-    }
+        // Cull instances
+        render->commandList->SetPipelineState(render->instanceCullingPSO.get());
+        render->commandList->Dispatch((render->numInstances + 127) / 128, 1, 1);
 
-    // Do the draws
-    render->commandList->RSSetViewports(1, &render->viewport);
-    render->commandList->RSSetScissorRects(1, &render->scissorRect);
-    render->commandList->ClearDepthStencilView(render->depthStencilDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-    float color[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-    render->commandList->ClearRenderTargetView(render->vBufferRTV, color, 0, nullptr);
-    render->commandList->OMSetRenderTargets(1, &render->vBufferRTV, FALSE, &render->depthStencilDSV);
-    render->commandList->SetGraphicsRootSignature(render->drawRootSignature.get());
-    render->commandList->SetPipelineState(render->drawMeshPSO.get());
-    render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
+        {
+            D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstances.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
+            };
+            render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
 
-    render->commandList->ExecuteIndirect(render->commandSignature.get(), 1, render->visibleClustersCounter.resource.get(), 0, nullptr, 0);
+        // Cull clusters
+        render->commandList->SetPipelineState(render->clusterCullingPSO.get());
+        render->commandList->Dispatch((render->maxNumClusters + 127) / 128, 1, 1);
 
-    {
-        D3D12_RESOURCE_BARRIER barriers[] = {
-            CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ),
-            CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-        };
-        render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        {
+            D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET),
+            };
+            render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
+
+        // Do the draws
+        render->commandList->RSSetViewports(1, &render->viewport);
+        render->commandList->RSSetScissorRects(1, &render->scissorRect);
+        render->commandList->ClearDepthStencilView(render->depthStencilDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        float color[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        render->commandList->ClearRenderTargetView(render->vBufferRTV, color, 0, nullptr);
+        render->commandList->OMSetRenderTargets(1, &render->vBufferRTV, FALSE, &render->depthStencilDSV);
+        render->commandList->SetGraphicsRootSignature(render->drawRootSignature.get());
+        render->commandList->SetPipelineState(render->drawMeshPSO.get());
+        render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
+
+        render->commandList->ExecuteIndirect(render->commandSignature.get(), 72000, render->visibleClustersCounter.resource.get(), 0, render->visibleClustersCounter.resource.get(), 0);
+
+        {
+            D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+            };
+            render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
     }
 
     // VBuffer to color buffer
@@ -1606,6 +1693,7 @@ void Draw(Render* render)
     ImGui::Checkbox("Locked Culling Camera", &lockedCullingCamera);
     ImGui::Checkbox("Vizualize Instances", &visualizeInstances);
     ImGui::Checkbox("Vizualize Clusters", &visualizeClusters);
+    ImGui::Checkbox("Work Graph", &workGraph);
     ImGui::End();
     ImGui::Render();
 
