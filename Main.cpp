@@ -47,6 +47,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
     char* generatorFileName = nullptr;
     char* generatorFileNameBin = nullptr;
     int generatorLod = 0;
+    bool useWarp = false;
 
     int numArgs = 0;
     LPWSTR* args = CommandLineToArgvW(lpCmdLine, &numArgs);
@@ -88,6 +89,11 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
 
                 generatorLod = _wtoi(args[ia]);
             }
+            else if (wcscmp(args[ia], L"-warp") == 0)
+            {
+                ia += 1;
+                useWarp = true;
+            }
 
             ia += 1;
         }
@@ -124,7 +130,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
         hInstance,
         render);
 
-    Initialize(render, hwnd);
+    Initialize(render, hwnd, useWarp);
    
     ShowWindow(hwnd, nCmdShow);
 

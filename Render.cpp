@@ -8,6 +8,7 @@
 #include <dxcapi.h>
 
 #include "imgui.h"
+#include "imgui_internal.h" // For PushItemFlag
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx12.h"
 
@@ -184,20 +185,22 @@ struct Render
     UINT width = 1280;
     UINT height = 720;
 
+    bool supportsWorkGraph = false;
+
     com_ptr<IDXGIFactory6> dxgiFactory;
     com_ptr<ID3D12Device14> device;
     com_ptr<IDStorageFactory> storageFactory;
     com_ptr<ID3D12CommandQueue> commandQueue;
     com_ptr<IDStorageQueue> storageQueue;
     com_ptr<IDXGISwapChain3> swapChain;
-    UINT frameIndex;
+    UINT frameIndex = 0;
 
     com_ptr<ID3D12DescriptorHeap> rtvHeap;
     com_ptr<ID3D12DescriptorHeap> dsvHeap;
     com_ptr<ID3D12DescriptorHeap> uniHeap;
-    UINT rtvDescriptorSize;
-    UINT dsvDescriptorSize;
-    UINT uniDescriptorSize;
+    UINT rtvDescriptorSize = 0;
+    UINT dsvDescriptorSize = 0;
+    UINT uniDescriptorSize = 0;
 
     com_ptr<ID3D12Resource> backBuffers[NUM_QUEUED_FRAMES];
     CD3DX12_CPU_DESCRIPTOR_HANDLE backBufferRTVs[NUM_QUEUED_FRAMES];
@@ -212,9 +215,9 @@ struct Render
     com_ptr<ID3D12Resource> depthStencil;
     CD3DX12_CPU_DESCRIPTOR_HANDLE depthStencilDSV;
 
-    UINT numInstances;
-    UINT numClusters;
-    UINT maxNumClusters;
+    UINT numInstances = 0;
+    UINT numClusters = 0;
+    UINT maxNumClusters = 0;
     Constants constantBufferData;
     Buffer constantBuffer;
     Buffer instancesBuffer;
@@ -229,11 +232,11 @@ struct Render
     Buffer workGraphBuffer;
     Buffer workGraphBackingMemory;
     Buffer workGraphNodeLocalRootArgumentsTable;
-    char* cbvDataBegin;
+    char* cbvDataBegin = nullptr;
 
-    Instance* instancesCpu;
-    Mesh* meshesCpu;
-    Cluster* clustersCpu;
+    Instance* instancesCpu = nullptr;
+    Mesh* meshesCpu = nullptr;
+    Cluster* clustersCpu = nullptr;
 
     Buffer visibleInstances;
     Buffer visibleClusters;
@@ -258,7 +261,7 @@ struct Render
     com_ptr<ID3D12GraphicsCommandList10> commandList;
 
     com_ptr<ID3D12Fence1> fence;
-    UINT64 fenceValues[NUM_QUEUED_FRAMES];
+    UINT64 fenceValues[NUM_QUEUED_FRAMES] = { 0};
     HANDLE fenceEvent;
 
     com_ptr<ID3D12CommandSignature> commandSignature;
@@ -275,7 +278,7 @@ struct Render
         float3 pos;
     } cullingCamera, drawingCamera;
 
-    double lastTime;
+    double lastTime = 0.0;
 
     WireContainer wireContainer[NUM_QUEUED_FRAMES];
 
@@ -563,11 +566,6 @@ Render* CreateRender(UINT width, UINT height)
     render->width = width;
     render->height = height;
 
-    render->frameIndex = 0;
-
-    render->rtvDescriptorSize = 0;
-    render->dsvDescriptorSize = 0;
-
     return render;
 }
 
@@ -584,7 +582,7 @@ void Destroy(Render* render)
 	delete render;
 }
 
-void Initialize(Render* render, HWND hwnd)
+void Initialize(Render* render, HWND hwnd, bool useWarp)
 {
     UUID GPUWorkGraphExperimentalFeatures[2] = { D3D12ExperimentalShaderModels, D3D12StateObjectsExperiment };
     check_hresult(D3D12EnableExperimentalFeatures(_countof(GPUWorkGraphExperimentalFeatures), GPUWorkGraphExperimentalFeatures, nullptr, nullptr));
@@ -615,8 +613,7 @@ void Initialize(Render* render, HWND hwnd)
         check_hresult(initialFactory->QueryInterface(IID_PPV_ARGS(render->dxgiFactory.put())));
     }
 
-    bool useWarpDevice = true;
-    if (useWarpDevice)
+    if (useWarp)
     {
         com_ptr<IDXGIAdapter4> warpAdapter;
         check_hresult(render->dxgiFactory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter)));
@@ -631,7 +628,7 @@ void Initialize(Render* render, HWND hwnd)
 
     D3D12_FEATURE_DATA_D3D12_OPTIONS21 Options = {};
     render->device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS21, &Options, sizeof(Options));
-    check_bool(Options.WorkGraphsTier != D3D12_WORK_GRAPHS_TIER_NOT_SUPPORTED);
+    render->supportsWorkGraph =  Options.WorkGraphsTier != D3D12_WORK_GRAPHS_TIER_NOT_SUPPORTED;
 
     CompileShaders(render);
 
@@ -1115,7 +1112,7 @@ void Initialize(Render* render, HWND hwnd)
     /*
     * Work Graph
     */
-    if (1)
+    if (render->supportsWorkGraph)
     {
         render->device->CreateRootSignatureFromSubobjectInLibrary(0,
             render->workGraphBlob->GetBufferPointer(),
@@ -1191,7 +1188,7 @@ void Initialize(Render* render, HWND hwnd)
         D3D12_WORK_GRAPH_MEMORY_REQUIREMENTS memReqs = {};
         workGraphProps->GetWorkGraphMemoryRequirements(workGraphIndex, &memReqs);
         
-        if(memReqs.MaxSizeInBytes > 0)
+        if (memReqs.MaxSizeInBytes > 0)
             CreateBuffer(render, &render->workGraphBackingMemory, BufferDesc(memReqs.MaxSizeInBytes, 1).WithUAV().WithName(L"WorkGraphBackingMemory"));
 
         CreateBuffer(render, &render->workGraphNodeLocalRootArgumentsTable, BufferDesc(4, 4).WithName(L"WorkGraphNodeLocalRootArgumentsTable"));
@@ -1391,7 +1388,7 @@ static bool visualizeInstances = false;
 static bool visualizeClusters = false;
 static bool fastMove = false;
 static bool lockedCullingCamera = false;
-static bool workGraph = true;
+static bool workGraph = false;
 
 void Draw(Render* render)
 {
@@ -1552,7 +1549,7 @@ void Draw(Render* render)
     render->commandList->SetDescriptorHeaps(_countof(heaps), heaps);
 
     // Work Graph execution
-    if (workGraph)
+    if (render->supportsWorkGraph && workGraph)
     {
         {
             D3D12_RESOURCE_BARRIER barriers[] = {
@@ -1693,7 +1690,19 @@ void Draw(Render* render)
     ImGui::Checkbox("Locked Culling Camera", &lockedCullingCamera);
     ImGui::Checkbox("Vizualize Instances", &visualizeInstances);
     ImGui::Checkbox("Vizualize Clusters", &visualizeClusters);
+
+    if (!render->supportsWorkGraph)
+    {
+        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+    }
     ImGui::Checkbox("Work Graph", &workGraph);
+    if (!render->supportsWorkGraph)
+    {
+        ImGui::PopItemFlag();
+        ImGui::PopStyleVar();
+    }
+
     ImGui::End();
     ImGui::Render();
 

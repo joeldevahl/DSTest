@@ -122,7 +122,7 @@ void ClusterCulling(
 
 	if (visibleClusterIndex >= MAX_ELEMENTS) 
         return;
-
+         
 	uint val = ((mesh.ClusterStart + clusterIndex) & 0x0000ffff) | (inputs.visibleInstanceIndex << 16);
     RWByteAddressBuffer visibleClusters = ResourceDescriptorHeap[VISIBLE_CLUSTERS_UAV];
 	visibleClusters.Store(visibleClusterIndex * 4, val);
@@ -180,4 +180,3 @@ void MeshNode(
         verts[gtid].Position = mul(constants.DrawingCamera.ViewProjectionMatrix, transformedVert);
     }
 }
-

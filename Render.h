@@ -45,5 +45,5 @@ inline CenterExtentsAABB TransformAABB(const CenterExtentsAABB& in, const float4
 Render* CreateRender(UINT width, UINT height);
 void Destroy(Render* render);
 
-void Initialize(Render* render, HWND hwnd);
+void Initialize(Render* render, HWND hwnd, bool useWarp);
 void Draw(Render* render);
