@@ -48,6 +48,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
     char* generatorFileNameBin = nullptr;
     int generatorLod = 0;
     bool useWarp = false;
+    bool useWorkGraph = false;
 
     int numArgs = 0;
     LPWSTR* args = CommandLineToArgvW(lpCmdLine, &numArgs);
@@ -91,8 +92,11 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
             }
             else if (wcscmp(args[ia], L"-warp") == 0)
             {
-                ia += 1;
                 useWarp = true;
+            }
+            else if (wcscmp(args[ia], L"-workGraph") == 0)
+            {
+                useWorkGraph = true;
             }
 
             ia += 1;
@@ -131,6 +135,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
         render);
 
     Initialize(render, hwnd, useWarp);
+    SetWorkGraph(render, useWorkGraph);
    
     ShowWindow(hwnd, nCmdShow);
 

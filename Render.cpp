@@ -1764,3 +1764,8 @@ void Draw(Render* render)
 
     render->fenceValues[render->frameIndex] = currentFenceValue + 1;
 }
+
+void SetWorkGraph(Render* render, bool useWorkGraph)
+{
+    workGraph = useWorkGraph;
+}

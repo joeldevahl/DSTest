@@ -47,3 +47,5 @@ void Destroy(Render* render);
 
 void Initialize(Render* render, HWND hwnd, bool useWarp);
 void Draw(Render* render);
+
+void SetWorkGraph(Render* render, bool useWorkGraph);
