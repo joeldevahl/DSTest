@@ -122,7 +122,7 @@ void main(uint2 dtid : SV_DispatchThreadID)
 	Texture2D<uint> vBuffer = ResourceDescriptorHeap[VBUFFER_SRV];
 	Texture2D<float> depthBuffer = ResourceDescriptorHeap[DEPTHBUFFER_SRV];
 	RWTexture2D<float4> colorBuffer = ResourceDescriptorHeap[COLORBUFFER_UAV];
-	
+
     if (constants.DebugMode == DEBUG_MODE_SHOW_TRIANGLES)
     {
         float d = depthBuffer[dtid];
@@ -266,15 +266,15 @@ void main(uint2 dtid : SV_DispatchThreadID)
         Material material = GetMaterial(instance.MaterialIndex);
 
         float3 color = CalcLighting(
-		n,
-		l,
-		float3(1.0f, 1.0f, 1.0f),
-		material.Color.xyz,
-		material.Color.zyz,
-		material.Roughness,
-		p,
-		float3(0.0f, 0.0f, 0.0f),
-		float3(1.0f, 1.0f, 1.0f));
+		    n,
+		    l,
+		    float3(1.0f, 1.0f, 1.0f),
+		    material.Color.xyz,
+		    material.Color.zyz,
+		    material.Roughness,
+		    p,
+		    float3(0.0f, 0.0f, 0.0f),
+		    float3(1.0f, 1.0f, 1.0f));
         colorBuffer[dtid] = float4(color, 1.0f);
     }
 }
