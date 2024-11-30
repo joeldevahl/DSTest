@@ -184,6 +184,7 @@ struct Render
 {
     UINT width = 1280;
     UINT height = 720;
+    HWND hwnd;
 
     bool supportsWorkGraph = false;
 
@@ -287,6 +288,13 @@ struct Render
     com_ptr<ID3DBlob> workGraphBlob;
     com_ptr<ID3DBlob> psBlob;
     com_ptr<ID3D12RootSignature> globalRootSignature;
+
+    bool recreateResources = true;
+    bool visualizeInstances = false;
+    bool visualizeClusters = false;
+    bool fastMove = false;
+    bool lockedCullingCamera = false;
+    bool workGraph = false;
 };
 
 struct handle_closer
@@ -584,6 +592,8 @@ void Destroy(Render* render)
 
 void Initialize(Render* render, HWND hwnd, bool useWarp)
 {
+    render->hwnd = hwnd;
+
     UUID GPUWorkGraphExperimentalFeatures[2] = { D3D12ExperimentalShaderModels, D3D12StateObjectsExperiment };
     check_hresult(D3D12EnableExperimentalFeatures(_countof(GPUWorkGraphExperimentalFeatures), GPUWorkGraphExperimentalFeatures, nullptr, nullptr));
 
@@ -628,9 +638,7 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
 
     D3D12_FEATURE_DATA_D3D12_OPTIONS21 Options = {};
     render->device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS21, &Options, sizeof(Options));
-    render->supportsWorkGraph =  Options.WorkGraphsTier != D3D12_WORK_GRAPHS_TIER_NOT_SUPPORTED;
-
-    CompileShaders(render);
+    render->supportsWorkGraph = Options.WorkGraphsTier != D3D12_WORK_GRAPHS_TIER_NOT_SUPPORTED;
 
     {
         DSTORAGE_CONFIGURATION dsConfig{};
@@ -679,29 +687,80 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
 
     render->frameIndex = render->swapChain->GetCurrentBackBufferIndex();
 
-	render->rtvHeap = CreateDescriptorHeap(render, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, (int)RenderTargets::RenderTargetCount);
-	render->dsvHeap = CreateDescriptorHeap(render, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, (int)DepthStencilTargets::DepthStencilTargetCount);
-	render->uniHeap = CreateDescriptorHeap(render, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1000000, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE);
-	render->rtvDescriptorSize = render->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-	render->dsvDescriptorSize = render->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
-	render->uniDescriptorSize = render->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    // Command allocators
+    for (UINT n = 0; n < NUM_QUEUED_FRAMES; n++)
+    {
+        check_hresult(render->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(render->commandAllocators[n].put())));
+        render->commandAllocators[n]->SetName(L"Main CommandAllocator");
+    }
 
+    render->rtvHeap = CreateDescriptorHeap(render, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, (int)RenderTargets::RenderTargetCount);
+    render->dsvHeap = CreateDescriptorHeap(render, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, (int)DepthStencilTargets::DepthStencilTargetCount);
+    render->uniHeap = CreateDescriptorHeap(render, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1000000, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE);
+    render->rtvDescriptorSize = render->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    render->dsvDescriptorSize = render->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+    render->uniDescriptorSize = render->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+    // Back buffers
+    CD3DX12_CPU_DESCRIPTOR_HANDLE rtvBaseHandle(render->rtvHeap->GetCPUDescriptorHandleForHeapStart());
+    for (UINT n = 0; n < NUM_QUEUED_FRAMES; n++)
+    {
+        check_hresult(render->swapChain->GetBuffer(n, IID_PPV_ARGS(render->backBuffers[n].put())));
+        render->backBufferRTVs[n] = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvBaseHandle, (int)RenderTargets::BackBuffer0 + n, render->rtvDescriptorSize);
+        render->device->CreateRenderTargetView(render->backBuffers[n].get(), nullptr, render->backBufferRTVs[n]);
+    }
+
+    // Setup Dear ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+    // Setup Platform/Renderer backends
+    ImGui_ImplWin32_Init(render->hwnd);
+    CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), IMGUI_FONT_SRV, render->uniDescriptorSize);
+    CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(render->uniHeap->GetGPUDescriptorHandleForHeapStart(), IMGUI_FONT_SRV, render->uniDescriptorSize);
+    ImGui_ImplDX12_Init(render->device.get(), NUM_QUEUED_FRAMES,
+        DXGI_FORMAT_R8G8B8A8_UNORM, render->uniHeap.get(),
+        cpuHandle,
+        gpuHandle);
+}
+
+static void WaitStorageIdle(Render* render)
+{
+    com_ptr<ID3D12Fence> fence;
+    check_hresult(render->device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fence.put())));
+
+    ScopedHandle fenceEvent(CreateEvent(nullptr, FALSE, FALSE, nullptr));
+    constexpr uint64_t fenceValue = 1;
+    check_hresult(fence->SetEventOnCompletion(fenceValue, fenceEvent.get()));
+    render->storageQueue->EnqueueSignal(fence.get(), fenceValue);
+
+    render->storageQueue->Submit();
+
+    WaitForSingleObject(fenceEvent.get(), INFINITE);
+}
+
+static void WaitGraphicsIdle(Render* render)
+{
+    com_ptr<ID3D12Fence> fence;
+    check_hresult(render->device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fence.put())));
+
+    ScopedHandle fenceEvent(CreateEvent(nullptr, FALSE, FALSE, nullptr));
+    constexpr uint64_t fenceValue = 1;
+    check_hresult(fence->SetEventOnCompletion(fenceValue, fenceEvent.get()));
+    render->commandQueue->Signal(fence.get(), fenceValue);
+
+    WaitForSingleObject(fenceEvent.get(), INFINITE);
+}
+
+static void RecreateResources(Render* render) {
     /*
      * Render Targets
      */
     {
         CD3DX12_CPU_DESCRIPTOR_HANDLE rtvBaseHandle(render->rtvHeap->GetCPUDescriptorHandleForHeapStart());
-
-        // Back buffers
-        for (UINT n = 0; n < NUM_QUEUED_FRAMES; n++)
-        {
-            check_hresult(render->swapChain->GetBuffer(n, IID_PPV_ARGS(render->backBuffers[n].put())));
-            render->backBufferRTVs[n] = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvBaseHandle, (int)RenderTargets::BackBuffer0 + n, render->rtvDescriptorSize);
-            render->device->CreateRenderTargetView(render->backBuffers[n].get(), nullptr, render->backBufferRTVs[n]);
-        
-            check_hresult(render->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(render->commandAllocators[n].put())));
-            render->commandAllocators[n]->SetName(L"Main CommandAllocator");
-        }
 
         // VBuffer
         {
@@ -977,6 +1036,8 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
         check_hresult(render->device->CreateRootSignature(0, rootBlob->GetBufferPointer(), rootBlob->GetBufferSize(), IID_PPV_ARGS(render->drawWireRootSignature.put())));
     }
 
+    CompileShaders(render);
+
     /*
      * VBuffer PSO
      */
@@ -1221,18 +1282,8 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
 
         // Issue a fence and wait for it
         {
-            com_ptr<ID3D12Fence> fence;
-            check_hresult(render->device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fence.put())));
-
-            ScopedHandle fenceEvent(CreateEvent(nullptr, FALSE, FALSE, nullptr));
-            constexpr uint64_t fenceValue = 1;
-            check_hresult(fence->SetEventOnCompletion(fenceValue, fenceEvent.get()));
-            render->storageQueue->EnqueueSignal(fence.get(), fenceValue);
-
-            render->storageQueue->Submit();
-
-            WaitForSingleObject(fenceEvent.get(), INFINITE);
-
+            WaitStorageIdle(render);
+            
             DSTORAGE_ERROR_RECORD errorRecord{};
             render->storageQueue->RetrieveErrorRecord(&errorRecord);
             if (FAILED(errorRecord.FirstFailure.HResult))
@@ -1268,23 +1319,6 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
 
     render->viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)render->width, (float)render->height);
     render->scissorRect = CD3DX12_RECT(0, 0, render->width, render->height);
-	
-	// Setup Dear ImGui context
-	IMGUI_CHECKVERSION();
-	ImGui::CreateContext();
-	ImGuiIO& io = ImGui::GetIO();
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-	
-	// Setup Platform/Renderer backends
-	ImGui_ImplWin32_Init(hwnd);
-	CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), IMGUI_FONT_SRV, render->uniDescriptorSize);
-	CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(render->uniHeap->GetGPUDescriptorHandleForHeapStart(), IMGUI_FONT_SRV, render->uniDescriptorSize);
-	ImGui_ImplDX12_Init(render->device.get(), NUM_QUEUED_FRAMES,
-		DXGI_FORMAT_R8G8B8A8_UNORM, render->uniHeap.get(),
-		cpuHandle,
-		gpuHandle);
-
 
     render->cullingCamera.projMat = make_float4x4_perspective_field_of_view(XM_PI / 3.0f, (float)render->width / (float)render->height, 1.0f, 10000.0f);
     render->cullingCamera.pitch = 0.225f;
@@ -1384,14 +1418,15 @@ bool IsCulled(CenterExtentsAABB aabb, Camera& camera)
 	return t0 | t1 | t2 | t3 | t4 | t5;
 }
 
-static bool visualizeInstances = false;
-static bool visualizeClusters = false;
-static bool fastMove = false;
-static bool lockedCullingCamera = false;
-static bool workGraph = false;
-
 void Draw(Render* render)
 {
+    if (render->recreateResources)
+    {
+        WaitGraphicsIdle(render);
+        RecreateResources(render);
+        render->recreateResources = false; // assume success for now
+    }
+
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
 
@@ -1422,7 +1457,7 @@ void Draw(Render* render)
         Render::Camera* cam = &render->drawingCamera;
         double time = ImGui::GetTime();
         float dt = (float)(time - render->lastTime);
-        float moveSpeed = fastMove ? 100.0f : 1.0f;
+        float moveSpeed = render->fastMove ? 100.0f : 1.0f;
         float lookSpeed = 0.3f;
         render->lastTime = time;
         
@@ -1463,7 +1498,7 @@ void Draw(Render* render)
 			* make_float4x4_rotation_x(cam->pitch);
     }
 
-    if (!lockedCullingCamera || ImGui::IsKeyDown(ImGuiKey_L))
+    if (!render->lockedCullingCamera || ImGui::IsKeyDown(ImGuiKey_L))
 		render->cullingCamera = render->drawingCamera;
 
     Camera cullCam = {};
@@ -1506,7 +1541,7 @@ void Draw(Render* render)
 
     // Debug visualization
     {
-        if (lockedCullingCamera)
+        if (render->lockedCullingCamera)
         {
             float4x4 viewProj = render->cullingCamera.viewMat * render->cullingCamera.projMat;
             float4x4 invViewProj;
@@ -1522,10 +1557,10 @@ void Draw(Render* render)
             if (IsCulled(instance->Box, cullCam))
                 continue;
 
-            if (visualizeInstances)
+            if (render->visualizeInstances)
 			    wireContainer->AddAABB(instance->Box);
 
-            if (visualizeClusters)
+            if (render->visualizeClusters)
             {
                 Mesh* mesh = render->meshesCpu + instance->MeshIndex;
                 for (int c = 0; c < mesh->ClusterCount; ++c)
@@ -1549,7 +1584,7 @@ void Draw(Render* render)
     render->commandList->SetDescriptorHeaps(_countof(heaps), heaps);
 
     // Work Graph execution
-    if (render->supportsWorkGraph && workGraph)
+    if (render->supportsWorkGraph && render->workGraph)
     {
         {
             D3D12_RESOURCE_BARRIER barriers[] = {
@@ -1682,21 +1717,23 @@ void Draw(Render* render)
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
     ImGui::Begin("Hello, world!", nullptr, windowFlags);
+    if (ImGui::Button("Recreate Resources"))
+        render->recreateResources = true;
     ImGui::Text("Instances: %d (of %d)", numInstancesPassedCulling, render->numInstances);
     ImGui::Text("Clusters: %d (of %d)", numClustersPassedCulling, render->numClusters);
     const char* items[] = { "Normal", "Show Triangles", "Show Clusters", "Show Instances", "Show Materials", "Show Depth Buffer" };
     ImGui::Combo("Display Mode", &render->displayMode, items, IM_ARRAYSIZE(items));
-    ImGui::Checkbox("Fast Move", &fastMove);
-    ImGui::Checkbox("Locked Culling Camera", &lockedCullingCamera);
-    ImGui::Checkbox("Vizualize Instances", &visualizeInstances);
-    ImGui::Checkbox("Vizualize Clusters", &visualizeClusters);
+    ImGui::Checkbox("Fast Move", &render->fastMove);
+    ImGui::Checkbox("Locked Culling Camera", &render->lockedCullingCamera);
+    ImGui::Checkbox("Vizualize Instances", &render->visualizeInstances);
+    ImGui::Checkbox("Vizualize Clusters", &render->visualizeClusters);
 
     if (!render->supportsWorkGraph)
     {
         ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
     }
-    ImGui::Checkbox("Work Graph", &workGraph);
+    ImGui::Checkbox("Work Graph", &render->workGraph);
     if (!render->supportsWorkGraph)
     {
         ImGui::PopItemFlag();
@@ -1767,5 +1804,5 @@ void Draw(Render* render)
 
 void SetWorkGraph(Render* render, bool useWorkGraph)
 {
-    workGraph = useWorkGraph;
+    render->workGraph = useWorkGraph;
 }
