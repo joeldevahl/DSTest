@@ -24,7 +24,7 @@ inline CenterExtentsAABB MinMaxToCenterExtents(const MinMaxAABB& mm)
 inline float3 abs(float3 const& val)
 {
 	return float3(fabs(val.x), fabs(val.y), fabs(val.z));
-}
+} 
 
 inline CenterExtentsAABB TransformAABB(const CenterExtentsAABB& in, const float4x4& mat)
 {
@@ -44,7 +44,7 @@ inline CenterExtentsAABB TransformAABB(const CenterExtentsAABB& in, const float4
 
 Render* CreateRender(UINT width, UINT height);
 void Destroy(Render* render);
-
+ 
 void Initialize(Render* render, HWND hwnd, bool useWarp);
 void Draw(Render* render);
 

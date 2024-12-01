@@ -285,8 +285,15 @@ struct Render
 
     int displayMode = DEBUG_MODE_NONE;
 
+    com_ptr<ID3DBlob> vBufferBlobMS;
+    com_ptr<ID3DBlob> vBufferBlobPS;
+    com_ptr<ID3DBlob> wireBlobVS;
+    com_ptr<ID3DBlob> wireBlobPS;
+    com_ptr<ID3DBlob> frameSetupBlobCS;
+    com_ptr<ID3DBlob> instanceCullingBlobCS;
+    com_ptr<ID3DBlob> clusterCullingBlobCS;
+    com_ptr<ID3DBlob> materialBlobCS;
     com_ptr<ID3DBlob> workGraphBlob;
-    com_ptr<ID3DBlob> psBlob;
     com_ptr<ID3D12RootSignature> globalRootSignature;
 
     bool recreateResources = true;
@@ -433,8 +440,15 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
 
 static bool CompileShaders(Render* render)
 {
+    render->vBufferBlobMS = CompileShader(render, L"main", L"VBufferMS.hlsl", L"ms_6_6");
+    render->vBufferBlobPS = CompileShader(render, L"main", L"VBufferPS.hlsl", L"ps_6_6");
+    render->wireBlobVS = CompileShader(render, L"main", L"WireVS.hlsl", L"vs_6_6");
+    render->wireBlobPS = CompileShader(render, L"main", L"WirePS.hlsl", L"ps_6_6");
+    render->frameSetupBlobCS = CompileShader(render, L"main", L"FrameSetup.hlsl", L"cs_6_6");
+    render->instanceCullingBlobCS = CompileShader(render, L"main", L"InstanceCulling.hlsl", L"cs_6_6");
+    render->clusterCullingBlobCS = CompileShader(render, L"main", L"ClusterCulling.hlsl", L"cs_6_6");
+    render->materialBlobCS = CompileShader(render, L"main", L"material.hlsl", L"cs_6_6");
     render->workGraphBlob = CompileShader(render, nullptr, L"WorkGraph.hlsl", L"lib_6_9");
-    render->psBlob = CompileShader(render, L"main", L"VBufferPS.hlsl", L"ps_6_6");
 
     return true;
 }
@@ -1042,19 +1056,10 @@ static void RecreateResources(Render* render) {
      * VBuffer PSO
      */
     {
-        struct
-        {
-            byte* data;
-            uint32_t size;
-        } meshShader, pixelShader;
-
-        ReadDataFromFile(L"x64/Debug/VBufferMS.cso", &meshShader.data, &meshShader.size);
-        ReadDataFromFile(L"x64/Debug/VBufferPS.cso", &pixelShader.data, &pixelShader.size);
-
         D3DX12_MESH_SHADER_PIPELINE_STATE_DESC psoDesc = {};
         psoDesc.pRootSignature = render->drawRootSignature.get();
-        psoDesc.MS = { meshShader.data, meshShader.size };
-        psoDesc.PS = { pixelShader.data, pixelShader.size };
+        psoDesc.MS = { render->vBufferBlobMS->GetBufferPointer(), render->vBufferBlobMS->GetBufferSize() };
+        psoDesc.PS = { render->vBufferBlobPS->GetBufferPointer(), render->vBufferBlobPS->GetBufferSize() };
         psoDesc.NumRenderTargets = 1;
         psoDesc.RTVFormats[0] = render->vBuffer->GetDesc().Format;
         psoDesc.DSVFormat = render->depthStencil->GetDesc().Format;
@@ -1071,28 +1076,16 @@ static void RecreateResources(Render* render) {
         streamDesc.SizeInBytes = sizeof(psoStream);
 
         check_hresult(render->device->CreatePipelineState(&streamDesc, IID_PPV_ARGS(render->drawMeshPSO.put())));
-
-        free(meshShader.data);
-        free(pixelShader.data);
     }
 
     /*
      * Wire PSO
      */
     {
-        struct
-        {
-            byte* data;
-            uint32_t size;
-        } vertexShader, pixelShader;
-
-        ReadDataFromFile(L"x64/Debug/WireVS.cso", &vertexShader.data, &vertexShader.size);
-        ReadDataFromFile(L"x64/Debug/WirePS.cso", &pixelShader.data, &pixelShader.size);
-
         D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
 		psoDesc.pRootSignature = render->drawWireRootSignature.get();
-        psoDesc.VS = { vertexShader.data, vertexShader.size };
-        psoDesc.PS = { pixelShader.data, pixelShader.size };
+        psoDesc.VS = { render->wireBlobVS->GetBufferPointer(), render->wireBlobVS->GetBufferSize() };
+        psoDesc.PS = { render->wireBlobPS->GetBufferPointer(), render->wireBlobPS->GetBufferSize() };
 		//psoDesc.StreamOutput;
 		psoDesc.BlendState = CD3DX12_BLEND_DESC(CD3DX12_DEFAULT());
 		psoDesc.SampleMask = 1;
@@ -1113,30 +1106,16 @@ static void RecreateResources(Render* render) {
 		//psoDesc.Flags;
 
 		check_hresult(render->device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(render->drawWirePSO.put())));
-
-        free(vertexShader.data);
-        free(pixelShader.data);
     }
 
     /*
      * Compute PSOs
      */
     {
-        struct
-        {
-            byte* data;
-            uint32_t size;
-        } frameSetup, instanceCullingComputeShader, clusterCullingComputeShader, materialComputeShader;
-
-        ReadDataFromFile(L"x64/Debug/FrameSetup.cso", &frameSetup.data, &frameSetup.size);
-        ReadDataFromFile(L"x64/Debug/InstanceCulling.cso", &instanceCullingComputeShader.data, &instanceCullingComputeShader.size);
-        ReadDataFromFile(L"x64/Debug/ClusterCulling.cso", &clusterCullingComputeShader.data, &clusterCullingComputeShader.size);
-        ReadDataFromFile(L"x64/Debug/Material.cso", &materialComputeShader.data, &materialComputeShader.size);
-
         {
 			D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
 			desc.pRootSignature = render->drawRootSignature.get();
-			desc.CS = { frameSetup.data, frameSetup.size};
+			desc.CS = { render->frameSetupBlobCS->GetBufferPointer(), render->frameSetupBlobCS->GetBufferSize() };
 
 			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->frameSetupPSO.put())));
         }
@@ -1144,7 +1123,7 @@ static void RecreateResources(Render* render) {
         {
 			D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
 			desc.pRootSignature = render->drawRootSignature.get();
-			desc.CS = { instanceCullingComputeShader.data, instanceCullingComputeShader.size};
+			desc.CS = { render->instanceCullingBlobCS->GetBufferPointer(), render->instanceCullingBlobCS->GetBufferSize() };
 
 			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->instanceCullingPSO.put())));
         }
@@ -1152,7 +1131,7 @@ static void RecreateResources(Render* render) {
         {
 			D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
 			desc.pRootSignature = render->drawRootSignature.get();
-			desc.CS = { clusterCullingComputeShader.data, clusterCullingComputeShader.size};
+			desc.CS = { render->clusterCullingBlobCS->GetBufferPointer(), render->clusterCullingBlobCS->GetBufferSize() };
 
 			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->clusterCullingPSO.put())));
         }
@@ -1160,14 +1139,10 @@ static void RecreateResources(Render* render) {
         {
 			D3D12_COMPUTE_PIPELINE_STATE_DESC desc {};
 			desc.pRootSignature = render->drawRootSignature.get();
-			desc.CS = { materialComputeShader.data, materialComputeShader.size};
+			desc.CS = { render->materialBlobCS->GetBufferPointer(), render->materialBlobCS->GetBufferSize() };
 
 			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->materialPSO.put())));
         }
-
-        free(instanceCullingComputeShader.data);
-        free(clusterCullingComputeShader.data);
-        free(materialComputeShader.data);
     }
 
     /*
@@ -1199,7 +1174,7 @@ static void RecreateResources(Render* render) {
         libraryDesc->DefineExport(L"MeshNodesLocalRS");
 
         CD3DX12_DXIL_LIBRARY_SUBOBJECT* psDesc = desc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
-        CD3DX12_SHADER_BYTECODE psCode(render->psBlob.get());
+        CD3DX12_SHADER_BYTECODE psCode(render->vBufferBlobPS.get());
         psDesc->SetDXILLibrary(&psCode);
         psDesc->DefineExport(L"main");
 
