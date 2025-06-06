@@ -180,7 +180,7 @@ MergeCandidate SelectBestCandidateTree(const MergeCandidate& input, const std::v
 	return output;
 }
 
-void Generate(const char* filename, const char* filenameBin, int outputLod)
+void Generate(const char* filename, int outputLod)
 {
 	std::vector<float3> out_positions;
 	std::vector<float3> out_normals;
@@ -195,9 +195,6 @@ void Generate(const char* filename, const char* filenameBin, int outputLod)
 	cgltf_options options = {};
 	cgltf_data* data = nullptr;
 	cgltf_result result = cgltf_parse_file(&options, filename, &data);
-	assert(result == cgltf_result_success);
-
-	result = cgltf_load_buffers(&options, data, filenameBin);
 	assert(result == cgltf_result_success);
 
 	for (int m = 0; m < data->meshes_count; ++m)

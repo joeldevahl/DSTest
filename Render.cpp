@@ -22,6 +22,13 @@ using winrt::check_bool;
 
 #define NUM_QUEUED_FRAMES 3
 
+#define MAX_INSTANCES UINT16_MAX
+#define MAX_CLUSTERS UINT16_MAX
+#define MAX_VERTICES (2 * UINT16_MAX)
+#define MAX_INDICES (10 * UINT16_MAX)
+#define MAX_MESHES 1024
+#define MAX_MATERIALS 1024
+
 extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 715; }
 extern "C" { __declspec(dllexport) extern const char8_t* D3D12SDKPath = u8".\\D3D12\\"; }
 
@@ -297,6 +304,7 @@ struct Render
     com_ptr<ID3D12RootSignature> globalRootSignature;
 
     bool recreateResources = true;
+    bool reloadScene = true;
     bool visualizeInstances = false;
     bool visualizeClusters = false;
     bool fastMove = false;
@@ -900,84 +908,47 @@ static void RecreateResources(Render* render) {
     }
 
     /*
-     * Open files to query sizes
-     */
-    com_ptr<IDStorageFile> instancesFile;
-    com_ptr<IDStorageFile> meshesFile;
-    com_ptr<IDStorageFile> clustersFile;
-    com_ptr<IDStorageFile> positionsFile;
-    com_ptr<IDStorageFile> normalsFile;
-    com_ptr<IDStorageFile> tangentsFile;
-    com_ptr<IDStorageFile> texcoordsFile;
-    com_ptr<IDStorageFile> indicesFile;
-    com_ptr<IDStorageFile> materialsFile;
-    UINT32 instancesSize = 0;
-    UINT32 meshesSize = 0;
-    UINT32 clustersSize = 0;
-    UINT32 positionsSize = 0;
-    UINT32 normalsSize = 0;
-    UINT32 tangentsSize = 0;
-    UINT32 texcoordsSize = 0;
-    UINT32 indicesSize = 0;
-    UINT32 materialsSize = 0;
-	OpenFileForLoading(render, L"instances.raw", instancesFile, instancesSize);
-	OpenFileForLoading(render, L"meshes.raw", meshesFile, meshesSize);
-	OpenFileForLoading(render, L"clusters.raw", clustersFile, clustersSize);
-	OpenFileForLoading(render, L"positions.raw", positionsFile, positionsSize);
-	OpenFileForLoading(render, L"normals.raw", normalsFile, normalsSize);
-	OpenFileForLoading(render, L"tangents.raw", tangentsFile, tangentsSize);
-	OpenFileForLoading(render, L"texcoords.raw", texcoordsFile, texcoordsSize);
-	OpenFileForLoading(render, L"indices.raw", indicesFile, indicesSize);
-	OpenFileForLoading(render, L"materials.raw", materialsFile, materialsSize);
-    render->numInstances = instancesSize / sizeof(Instance);
-    render->numClusters = clustersSize / sizeof(Cluster);
-    render->maxNumClusters = MAX_ELEMENTS;
-
-    assert(render->numInstances <= MAX_ELEMENTS);
-    assert(render->numClusters <= MAX_ELEMENTS);
-
-    /*
      * Mesh and Instance Pool
      */
 	CreateBuffer(render, &render->instancesBuffer,
-        BufferDesc(instancesSize / sizeof(Instance), sizeof(Instance))
+        BufferDesc(MAX_INSTANCES, sizeof(Instance))
         .WithName(L"InstancesBuffer")
         .WithSRV(INSTANCE_BUFFER_SRV));
 	CreateBuffer(render, &render->meshesBuffer,
-        BufferDesc(meshesSize / sizeof(Mesh), sizeof(Mesh))
+        BufferDesc(MAX_MESHES, sizeof(Mesh))
         .WithName(L"MeshesBuffer")
         .WithSRV(MESH_BUFFER_SRV));
 	CreateBuffer(render, &render->clustersBuffer,
-        BufferDesc(clustersSize / sizeof(Cluster), sizeof(Cluster))
+        BufferDesc(MAX_CLUSTERS, sizeof(Cluster))
         .WithName(L"ClustersBuffer")
         .WithSRV(CLUSTER_BUFFER_SRV));
 	CreateBuffer(render, &render->positionsBuffer,
-        BufferDesc(positionsSize / sizeof(float3), sizeof(float3))
+        BufferDesc(MAX_VERTICES, sizeof(float3))
         .WithName(L"PositionsBuffer")
         .WithSRV(POSITION_DATA_BUFFER_SRV)
         .WithRAW());
 	CreateBuffer(render, &render->normalsBuffer,
-        BufferDesc(normalsSize / sizeof(float3), sizeof(float3))
+        BufferDesc(MAX_VERTICES, sizeof(float3))
         .WithName(L"NormalsBuffer")
         .WithSRV(NORMAL_DATA_BUFFER_SRV)
         .WithRAW());
 	CreateBuffer(render, &render->tangentsBuffer,
-        BufferDesc(tangentsSize / sizeof(float4), sizeof(float4))
+        BufferDesc(MAX_VERTICES, sizeof(float4))
         .WithName(L"TangentsBuffer")
         .WithSRV(TANGENT_DATA_BUFFER_SRV)
         .WithRAW());
 	CreateBuffer(render, &render->texcoordsBuffer,
-        BufferDesc(texcoordsSize / sizeof(float2), sizeof(float2))
+        BufferDesc(MAX_VERTICES, sizeof(float2))
         .WithName(L"TexcoordsBuffer")
         .WithSRV(TEXCOORD_DATA_BUFFER_SRV)
         .WithRAW());
 	CreateBuffer(render, &render->indexDataBuffer,
-        BufferDesc(indicesSize / sizeof(UINT), sizeof(UINT))
+        BufferDesc(MAX_INDICES, sizeof(UINT))
         .WithName(L"IndexDataBuffer")
         .WithSRV(INDEX_DATA_BUFFER_SRV)
         .WithRAW());
 	CreateBuffer(render, &render->materialsBuffer,
-        BufferDesc(materialsSize / sizeof(Material), sizeof(Material))
+        BufferDesc(MAX_MATERIALS, sizeof(Material))
         .WithName(L"MaterialsBuffer")
         .WithSRV(MATERIAL_BUFFER_SRV));
 
@@ -991,13 +962,13 @@ static void RecreateResources(Render* render) {
      * Intermediate buffers
      */
 	CreateBuffer(render, &render->visibleInstances,
-        BufferDesc(render->numInstances, sizeof(UINT))
-        .WithName(L"VisibleInstancesBuffer")
+        BufferDesc(MAX_INSTANCES, sizeof(UINT))
+        .WithName(L"VisibleInstancesBuffer") 
         .WithSRV(VISIBLE_INSTANCES_SRV)
         .WithUAV(VISIBLE_INSTANCES_UAV)
         .WithRAW());
     CreateBuffer(render, &render->visibleClusters,
-        BufferDesc(render->maxNumClusters, sizeof(UINT))
+        BufferDesc(MAX_CLUSTERS, sizeof(UINT))
         .WithName(L"VisibleClustersBuffer")
         .WithSRV(VISIBLE_CLUSTERS_SRV)
         .WithUAV(VISIBLE_CLUSTERS_UAV)
@@ -1234,40 +1205,6 @@ static void RecreateResources(Render* render) {
     render->commandList->SetName(L"Main CommandList");
     check_hresult(render->commandList->Close());
 
-    /*
-     * Load data using DirectStorage
-     */
-    {
-        render->instancesCpu = (Instance*)malloc(instancesSize);
-        render->meshesCpu = (Mesh*)malloc(meshesSize);
-        render->clustersCpu = (Cluster*)malloc(clustersSize);
-
-        LoadFileToGPU(render, instancesFile, render->instancesBuffer.resource.get(), instancesSize);
-        LoadFileToCPU(render, instancesFile, render->instancesCpu, instancesSize);
-        LoadFileToGPU(render, meshesFile, render->meshesBuffer.resource.get(), meshesSize);
-        LoadFileToCPU(render, meshesFile, render->meshesCpu, meshesSize);
-        LoadFileToGPU(render, clustersFile, render->clustersBuffer.resource.get(), clustersSize);
-        LoadFileToCPU(render, clustersFile, render->clustersCpu, clustersSize);
-        LoadFileToGPU(render, positionsFile, render->positionsBuffer.resource.get(), positionsSize);
-        LoadFileToGPU(render, normalsFile, render->normalsBuffer.resource.get(), normalsSize);
-        LoadFileToGPU(render, tangentsFile, render->tangentsBuffer.resource.get(), tangentsSize);
-        LoadFileToGPU(render, texcoordsFile, render->texcoordsBuffer.resource.get(), texcoordsSize);
-        LoadFileToGPU(render, indicesFile, render->indexDataBuffer.resource.get(), indicesSize);
-        LoadFileToGPU(render, materialsFile, render->materialsBuffer.resource.get(), materialsSize);
-
-        // Issue a fence and wait for it
-        {
-            WaitStorageIdle(render);
-            
-            DSTORAGE_ERROR_RECORD errorRecord{};
-            render->storageQueue->RetrieveErrorRecord(&errorRecord);
-            if (FAILED(errorRecord.FirstFailure.HResult))
-            {
-                __debugbreak();
-            }
-        }
-    }
-
     {
         check_hresult(render->device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(render->fence.put())));
         render->fenceValues[render->frameIndex]++;
@@ -1321,6 +1258,89 @@ static void RecreateResources(Render* render) {
             reinterpret_cast<void**>(&render->wireContainer[i].vertexPtr)));
         render->wireContainer->maxVertices = wireContainerSize;
         render->wireContainer->numVertices = 0;
+    }
+}
+
+static void ReloadScene(Render* render)
+{
+    /*
+    * Open files to query sizes
+    */
+    com_ptr<IDStorageFile> instancesFile;
+    com_ptr<IDStorageFile> meshesFile;
+    com_ptr<IDStorageFile> clustersFile;
+    com_ptr<IDStorageFile> positionsFile;
+    com_ptr<IDStorageFile> normalsFile;
+    com_ptr<IDStorageFile> tangentsFile;
+    com_ptr<IDStorageFile> texcoordsFile;
+    com_ptr<IDStorageFile> indicesFile;
+    com_ptr<IDStorageFile> materialsFile;
+    UINT32 instancesSize = 0;
+    UINT32 meshesSize = 0;
+    UINT32 clustersSize = 0;
+    UINT32 positionsSize = 0;
+    UINT32 normalsSize = 0;
+    UINT32 tangentsSize = 0;
+    UINT32 texcoordsSize = 0;
+    UINT32 indicesSize = 0;
+    UINT32 materialsSize = 0;
+    OpenFileForLoading(render, L"instances.raw", instancesFile, instancesSize);
+    OpenFileForLoading(render, L"meshes.raw", meshesFile, meshesSize);
+    OpenFileForLoading(render, L"clusters.raw", clustersFile, clustersSize);
+    OpenFileForLoading(render, L"positions.raw", positionsFile, positionsSize);
+    OpenFileForLoading(render, L"normals.raw", normalsFile, normalsSize);
+    OpenFileForLoading(render, L"tangents.raw", tangentsFile, tangentsSize);
+    OpenFileForLoading(render, L"texcoords.raw", texcoordsFile, texcoordsSize);
+    OpenFileForLoading(render, L"indices.raw", indicesFile, indicesSize);
+    OpenFileForLoading(render, L"materials.raw", materialsFile, materialsSize);
+    render->numInstances = instancesSize / sizeof(Instance);
+    render->numClusters = clustersSize / sizeof(Cluster);
+    render->maxNumClusters = MAX_ELEMENTS;
+
+    UINT32 numVertices = positionsSize / sizeof(float3);
+    UINT32 numIndices = indicesSize / sizeof(UINT);
+    UINT32 numMaterials = materialsSize / sizeof(Material);
+    UINT32 numMeshes = meshesSize / sizeof(Mesh);
+
+    assert(render->numInstances <= MAX_ELEMENTS);
+    assert(render->numClusters <= MAX_ELEMENTS);
+    assert(numVertices <= MAX_VERTICES); // Assumes all vertex data has the same count
+    assert(numIndices <= MAX_INDICES);
+    assert(numMaterials <= MAX_MATERIALS);
+    assert(numMeshes <= MAX_MESHES);
+
+    /*
+    * Load data using DirectStorage
+    */
+    {
+        render->instancesCpu = (Instance*)malloc(instancesSize);
+        render->meshesCpu = (Mesh*)malloc(meshesSize);
+        render->clustersCpu = (Cluster*)malloc(clustersSize);
+
+        LoadFileToGPU(render, instancesFile, render->instancesBuffer.resource.get(), instancesSize);
+        LoadFileToCPU(render, instancesFile, render->instancesCpu, instancesSize);
+        LoadFileToGPU(render, meshesFile, render->meshesBuffer.resource.get(), meshesSize);
+        LoadFileToCPU(render, meshesFile, render->meshesCpu, meshesSize);
+        LoadFileToGPU(render, clustersFile, render->clustersBuffer.resource.get(), clustersSize);
+        LoadFileToCPU(render, clustersFile, render->clustersCpu, clustersSize);
+        LoadFileToGPU(render, positionsFile, render->positionsBuffer.resource.get(), positionsSize);
+        LoadFileToGPU(render, normalsFile, render->normalsBuffer.resource.get(), normalsSize);
+        LoadFileToGPU(render, tangentsFile, render->tangentsBuffer.resource.get(), tangentsSize);
+        LoadFileToGPU(render, texcoordsFile, render->texcoordsBuffer.resource.get(), texcoordsSize);
+        LoadFileToGPU(render, indicesFile, render->indexDataBuffer.resource.get(), indicesSize);
+        LoadFileToGPU(render, materialsFile, render->materialsBuffer.resource.get(), materialsSize);
+
+        // Issue a fence and wait for it
+        {
+            WaitStorageIdle(render);
+
+            DSTORAGE_ERROR_RECORD errorRecord{};
+            render->storageQueue->RetrieveErrorRecord(&errorRecord);
+            if (FAILED(errorRecord.FirstFailure.HResult))
+            {
+                __debugbreak();
+            }
+        }
     }
 }
 
@@ -1400,6 +1420,12 @@ void Draw(Render* render)
         WaitGraphicsIdle(render);
         RecreateResources(render);
         render->recreateResources = false; // assume success for now
+    }
+
+    if (render->reloadScene)
+    {
+        ReloadScene(render);
+        render->reloadScene = false; // assume success for now
     }
 
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());

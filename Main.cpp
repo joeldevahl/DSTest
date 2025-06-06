@@ -6,6 +6,8 @@
 
 #include "imgui.h"
 
+#include "commdlg.h"
+
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -18,11 +20,11 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
     switch (message)
     {
     case WM_CREATE:
-    {
-        LPCREATESTRUCT pCreateStruct = reinterpret_cast<LPCREATESTRUCT>(lParam);
-        SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pCreateStruct->lpCreateParams));
-    }
-    return 0;
+        {
+            LPCREATESTRUCT pCreateStruct = reinterpret_cast<LPCREATESTRUCT>(lParam);
+            SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pCreateStruct->lpCreateParams));
+        }
+        return 0;
 
     case WM_PAINT:
         if (render)
@@ -45,7 +47,6 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
     const UINT height = 720;
 
     char* generatorFileName = nullptr;
-    char* generatorFileNameBin = nullptr;
     int generatorLod = 0;
     bool useWarp = false;
     bool useWorkGraph = false;
@@ -68,18 +69,6 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
                 generatorFileName = new char[numBytes];
 
                 numBytes = wcstombs(generatorFileName, args[ia], numBytes);
-            }
-            else if (wcscmp(args[ia], L"-bin") == 0)
-            {
-                ia += 1;
-
-                if (ia >= numArgs)
-                    return -1;
-
-                int numBytes = wcstombs(nullptr, args[ia], 0) + 1;
-                generatorFileNameBin = new char[numBytes];
-
-                wcstombs(generatorFileNameBin, args[ia], numBytes);
             }
             else if (wcscmp(args[ia], L"-lod") == 0)
             {
@@ -117,7 +106,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
     AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
     if (generatorFileName)
-        Generate(generatorFileName, generatorFileNameBin, generatorLod);
+        Generate(generatorFileName, generatorLod);
     
     Render* render = CreateRender(width, height);
 
@@ -133,6 +122,25 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
         nullptr,
         hInstance,
         render);
+
+
+    wchar_t szFile[260];
+    HANDLE hf;
+
+    OPENFILENAME openFileName = { 0 };
+    openFileName.lStructSize = sizeof(openFileName);
+    openFileName.hwndOwner = hwnd;
+    openFileName.hInstance = hInstance;
+    openFileName.lpstrFile = szFile;
+    openFileName.lpstrFile[0] = '\0';
+    openFileName.nMaxFile = sizeof(szFile);
+    openFileName.lpstrFilter = L"glb\0*.glb\0";
+    openFileName.nFilterIndex = 1;
+    openFileName.lpstrFileTitle = NULL;
+    openFileName.nMaxFileTitle = 0;
+    openFileName.lpstrInitialDir = NULL;
+    openFileName.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+    //BOOL couldOpen = GetOpenFileName(&openFileName);
 
     Initialize(render, hwnd, useWarp);
     SetWorkGraph(render, useWorkGraph);
@@ -153,8 +161,6 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
 
     if (generatorFileName)
         delete[] generatorFileName;
-    if (generatorFileNameBin)
-        delete[] generatorFileNameBin;
 
     return static_cast<char>(msg.wParam);
 }

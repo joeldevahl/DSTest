@@ -1,3 +1,3 @@
 #pragma once
 
-void Generate(const char* filename, const char* filenameBin, int outputLod);
+void Generate(const char* filename, int outputLod);
