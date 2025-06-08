@@ -123,29 +123,27 @@ void main(uint2 dtid : SV_DispatchThreadID)
 	Texture2D<float> depthBuffer = ResourceDescriptorHeap[DEPTHBUFFER_SRV];
 	RWTexture2D<float4> colorBuffer = ResourceDescriptorHeap[COLORBUFFER_UAV];
 
+    float d = depthBuffer[dtid];
+    uint v = vBuffer[dtid];
     if (constants.DebugMode == DEBUG_MODE_SHOW_TRIANGLES)
     {
-        float d = depthBuffer[dtid];
-        if (d >= 1.0f)
+        if (d >= 1.0f || v == 0xffffffff)
         {
             colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
             return;
         }
         
-        uint v = vBuffer[dtid];
         uint primitiveIndex = v & 0x000000FF;
         colorBuffer[dtid] = DebugColor(primitiveIndex);
     }
     else if (constants.DebugMode == DEBUG_MODE_SHOW_CLUSTERS)
     {
-        float d = depthBuffer[dtid];
-        if (d >= 1.0f)
+        if (d >= 1.0f || v == 0xffffffff)
         {
             colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
             return;
         }
         
-        uint v = vBuffer[dtid];
         uint primitiveIndex = v & 0x000000FF;
         uint visibleClusterIndex = v >> 8;
 
@@ -160,14 +158,12 @@ void main(uint2 dtid : SV_DispatchThreadID)
     }
     else if (constants.DebugMode == DEBUG_MODE_SHOW_INSTANCES)
     {
-        float d = depthBuffer[dtid];
-        if (d >= 1.0f)
+        if (d >= 1.0f || v == 0xffffffff)
         {
             colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
             return;
         }
         
-        uint v = vBuffer[dtid];
         uint primitiveIndex = v & 0x000000FF;
         uint visibleClusterIndex = v >> 8;
 
@@ -182,14 +178,12 @@ void main(uint2 dtid : SV_DispatchThreadID)
     }
     else if (constants.DebugMode == DEBUG_MODE_SHOW_MATERIALS)
     {
-        float d = depthBuffer[dtid];
-        if (d >= 1.0f)
+        if (d >= 1.0f || v == 0xffffffff)
         {
             colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
             return;
         }
         
-        uint v = vBuffer[dtid];
         uint primitiveIndex = v & 0x000000FF;
         uint visibleClusterIndex = v >> 8;
 
@@ -206,8 +200,6 @@ void main(uint2 dtid : SV_DispatchThreadID)
     }
     else if (constants.DebugMode == DEBUG_MODE_SHOW_DEPTH_BUFFER)
     {
-        float d = depthBuffer[dtid];
-
         float2 uv = dtid * float2(1.0f / 1280.0f, 1.0f / 720.0f);
         float3 wp = ReprojectDepth(d, uv);
 
@@ -221,14 +213,12 @@ void main(uint2 dtid : SV_DispatchThreadID)
     }
 	else
     {
-        float d = depthBuffer[dtid];
-        if (d >= 1.0f)
+        if (d >= 1.0f || v == 0xffffffff)
         {
             colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
             return;
         }
 
-        uint v = vBuffer[dtid];
         uint primitiveIndex = v & 0x000000FF;
         uint visibleClusterIndex = v >> 8;
 

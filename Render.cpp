@@ -24,12 +24,12 @@ using winrt::check_bool;
 
 #define MAX_INSTANCES UINT16_MAX
 #define MAX_CLUSTERS UINT16_MAX
-#define MAX_VERTICES (2 * UINT16_MAX)
-#define MAX_INDICES (10 * UINT16_MAX)
-#define MAX_MESHES 1024
-#define MAX_MATERIALS 1024
+#define MAX_VERTICES (4 * 1024 * 1024)
+#define MAX_INDICES (16 * 1024 * 1024)
+#define MAX_MESHES (8 * 1024)
+#define MAX_MATERIALS (1024)
 
-extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 715; }
+extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 717; }
 extern "C" { __declspec(dllexport) extern const char8_t* D3D12SDKPath = u8".\\D3D12\\"; }
 
 enum class RenderTargets : int
@@ -60,6 +60,7 @@ enum BufferFlags
     BUFFER_FLAG_UAV = 4,
     BUFFER_FLAG_UAV_DESCRIPTOR = 8,
     BUFFER_FLAG_CBV = 16,
+    BUFFER_FLAG_AS = 32,
 };
 
 struct BufferDesc
@@ -79,6 +80,7 @@ struct BufferDesc
     BufferDesc& WithUAV() { flags |= BUFFER_FLAG_UAV; return *this; }
     BufferDesc& WithUAV(UINT offset) { uavDescriptorOffset = offset; flags |= BUFFER_FLAG_UAV_DESCRIPTOR; return WithUAV(); }
     BufferDesc& WithRAW() { flags |= BUFFER_FLAG_RAW; return *this; }
+    BufferDesc& WithAS() { flags |= BUFFER_FLAG_AS; return *this; }
     BufferDesc& WithHeapType(D3D12_HEAP_TYPE _heapType) { heapType = _heapType; return *this; }
     BufferDesc& WithResourceState(D3D12_RESOURCE_STATES _resrourceStates) { resrourceStates = _resrourceStates; return *this; }
     BufferDesc& WithName(LPCWSTR str) { name = str; return *this; }
@@ -194,6 +196,7 @@ struct Render
     HWND hwnd;
 
     bool supportsWorkGraph = false;
+    bool supportsRayTracing = false;
 
     com_ptr<IDXGIFactory6> dxgiFactory;
     com_ptr<ID3D12Device14> device;
@@ -253,6 +256,11 @@ struct Render
 
     Buffer readbackBuffer;
 
+    Buffer scratch;
+    Buffer blasPool;
+    Buffer tlas;
+    Buffer tlasInstances;
+
     com_ptr<ID3D12RootSignature> drawRootSignature;
     com_ptr<ID3D12RootSignature> drawWireRootSignature;
     com_ptr<ID3D12PipelineState> drawMeshPSO;
@@ -265,6 +273,8 @@ struct Render
 
     com_ptr<ID3D12StateObject> workGraphSO;
     D3D12_PROGRAM_IDENTIFIER workGraphIdentifier;
+
+    com_ptr<ID3D12PipelineState> rayTracePSO;
 
     com_ptr<ID3D12GraphicsCommandList10> commandList;
 
@@ -291,7 +301,7 @@ struct Render
     WireContainer wireContainer[NUM_QUEUED_FRAMES];
 
     int displayMode = DEBUG_MODE_NONE;
-
+    
     com_ptr<ID3DBlob> vBufferBlobMS;
     com_ptr<ID3DBlob> vBufferBlobPS;
     com_ptr<ID3DBlob> wireBlobVS;
@@ -301,15 +311,18 @@ struct Render
     com_ptr<ID3DBlob> clusterCullingBlobCS;
     com_ptr<ID3DBlob> materialBlobCS;
     com_ptr<ID3DBlob> workGraphBlob;
+    com_ptr<ID3DBlob> rayTraceBlobCS;
     com_ptr<ID3D12RootSignature> globalRootSignature;
 
     bool recreateResources = true;
     bool reloadScene = true;
+    bool rebuildScene = true;
     bool visualizeInstances = false;
     bool visualizeClusters = false;
     bool fastMove = false;
     bool lockedCullingCamera = false;
     bool workGraph = false;
+    bool traceVisibility = true;
 };
 
 struct handle_closer
@@ -416,6 +429,11 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
     arguments.push_back(L"-I");
     arguments.push_back(L"C:/Code/DSTest/");
 
+    arguments.push_back(L"/Zi");
+    arguments.push_back(L"/Zss");
+    arguments.push_back(L"/Fd");
+    arguments.push_back(L".\\shaderpdbs\\");
+
     DxcBuffer sourceBuffer;
     sourceBuffer.Ptr = source->GetBufferPointer();
     sourceBuffer.Size = source->GetBufferSize();
@@ -441,6 +459,20 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
         __debugbreak();
     }
 
+    // Build a reflector for the existing container
+    //com_ptr<IDxcContainerReflection> pDxcContainerReflection;
+    //DxcCreateInstance(CLSID_DxcContainerReflection, IID_PPV_ARGS(&pDxcContainerReflection));
+
+    // Find which part index contains the debug data and retrieve it:
+    //UINT32 debugPartIndex;
+    //pDxcContainerReflection->FindFirstPartKind('ILDB', &debugPartIndex);
+    //com_ptr<IDxcBlob> pPDB;
+    //pDxcContainerReflection->GetPartContent(debugPartIndex, pPDB.put());
+
+    // DxilShaderDebugName is defined in DxilContainer.h
+    //pDebugNameData = reinterpret_cast<const DxilShaderDebugName*>(pPDBName->GetBufferPointer());
+    //const char* pName = reinterpret_cast<const char*>(pDebugNameData + 1);
+
     com_ptr<ID3DBlob> object;
     compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&object), nullptr);
     return object;
@@ -455,8 +487,11 @@ static bool CompileShaders(Render* render)
     render->frameSetupBlobCS = CompileShader(render, L"main", L"FrameSetup.hlsl", L"cs_6_6");
     render->instanceCullingBlobCS = CompileShader(render, L"main", L"InstanceCulling.hlsl", L"cs_6_6");
     render->clusterCullingBlobCS = CompileShader(render, L"main", L"ClusterCulling.hlsl", L"cs_6_6");
-    render->materialBlobCS = CompileShader(render, L"main", L"material.hlsl", L"cs_6_6");
-    render->workGraphBlob = CompileShader(render, nullptr, L"WorkGraph.hlsl", L"lib_6_9");
+    render->materialBlobCS = CompileShader(render, L"main", L"Material.hlsl", L"cs_6_6");
+    if (render->supportsWorkGraph)
+        render->workGraphBlob = CompileShader(render, nullptr, L"WorkGraph.hlsl", L"lib_6_9");
+    if (render->supportsRayTracing)
+        render->rayTraceBlobCS = CompileShader(render, L"main", L"RayTrace.hlsl", L"cs_6_6");
 
     return true;
 }
@@ -481,8 +516,11 @@ static void CreateBuffer(Render* render, Buffer* out_buffer, const BufferDesc& d
     auto resourceFlags = D3D12_RESOURCE_FLAG_NONE;
     bool isRaw = desc.flags & BUFFER_FLAG_RAW;
     bool isUAV = desc.flags & BUFFER_FLAG_UAV;
+    bool isAS = desc.flags & BUFFER_FLAG_AS;
     if (isUAV)
         resourceFlags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    if (isAS)
+        resourceFlags |= D3D12_RESOURCE_FLAG_RAYTRACING_ACCELERATION_STRUCTURE | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
 	auto heapProps = CD3DX12_HEAP_PROPERTIES(desc.heapType);
 	auto resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(size, resourceFlags);
@@ -490,7 +528,7 @@ static void CreateBuffer(Render* render, Buffer* out_buffer, const BufferDesc& d
 		&heapProps,
 		D3D12_HEAP_FLAG_NONE,
 		&resourceDesc,
-		D3D12_RESOURCE_STATE_COMMON,
+		isAS ? D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE : D3D12_RESOURCE_STATE_COMMON,
 		nullptr,
 		IID_PPV_ARGS(out_buffer->resource.put())));
     out_buffer->resource->SetName(desc.name);
@@ -507,15 +545,24 @@ static void CreateBuffer(Render* render, Buffer* out_buffer, const BufferDesc& d
 		}
 
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-        srvDesc.Format = format;
-        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        srvDesc.Buffer.FirstElement = 0;
-        srvDesc.Buffer.NumElements = isRaw ? (size / 4) : desc.count;
-        srvDesc.Buffer.StructureByteStride = isRaw ? 0 : desc.stride;
-        srvDesc.Buffer.Flags = srvFlags;
+        if (isAS) {
+            srvDesc.Format = format;
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srvDesc.RaytracingAccelerationStructure.Location = out_buffer->resource->GetGPUVirtualAddress();
+        }
+        else
+        {
+            srvDesc.Format = format;
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srvDesc.Buffer.FirstElement = 0;
+            srvDesc.Buffer.NumElements = isRaw ? (size / 4) : desc.count;
+            srvDesc.Buffer.StructureByteStride = isRaw ? 0 : desc.stride;
+            srvDesc.Buffer.Flags = srvFlags;
+        }
 
-        render->device->CreateShaderResourceView(out_buffer->resource.get(), &srvDesc, handle);
+        render->device->CreateShaderResourceView(isAS ? nullptr : out_buffer->resource.get(), &srvDesc, handle);
     }
 
     if (desc.flags & BUFFER_FLAG_UAV_DESCRIPTOR)
@@ -616,8 +663,8 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
 {
     render->hwnd = hwnd;
 
-    UUID GPUWorkGraphExperimentalFeatures[2] = { D3D12ExperimentalShaderModels, D3D12StateObjectsExperiment };
-    check_hresult(D3D12EnableExperimentalFeatures(_countof(GPUWorkGraphExperimentalFeatures), GPUWorkGraphExperimentalFeatures, nullptr, nullptr));
+    //UUID GPUWorkGraphExperimentalFeatures[2] = { D3D12ExperimentalShaderModels, D3D12StateObjectsExperiment };
+    //D3D12EnableExperimentalFeatures(_countof(GPUWorkGraphExperimentalFeatures), GPUWorkGraphExperimentalFeatures, nullptr, nullptr);
 
     UINT dxgiFactoryFlags = 0;
 #if defined(_DEBUG)
@@ -658,9 +705,17 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
         check_hresult(D3D12CreateDevice(hardwareAdapter.get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(render->device.put())));
     }
 
-    D3D12_FEATURE_DATA_D3D12_OPTIONS21 Options = {};
-    render->device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS21, &Options, sizeof(Options));
-    render->supportsWorkGraph = Options.WorkGraphsTier != D3D12_WORK_GRAPHS_TIER_NOT_SUPPORTED;
+    {
+        D3D12_FEATURE_DATA_D3D12_OPTIONS21 Options = {};
+        render->device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS21, &Options, sizeof(Options));
+        render->supportsWorkGraph = Options.WorkGraphsTier != D3D12_WORK_GRAPHS_TIER_NOT_SUPPORTED;
+    }
+
+    {
+        D3D12_FEATURE_DATA_D3D12_OPTIONS5 Options = {};
+        render->device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &Options, sizeof(Options));
+        render->supportsRayTracing = Options.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1;
+    }
 
     {
         DSTORAGE_CONFIGURATION dsConfig{};
@@ -795,7 +850,7 @@ static void RecreateResources(Render* render) {
             vBufferOptimizedClearValue.Color[2] = 0.0f;
             vBufferOptimizedClearValue.Color[3] = 0.0f;
 
-            auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32_UINT, render->width, render->height, 1, 0, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+            auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32_UINT, render->width, render->height, 1, 0, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
 			check_hresult(render->device->CreateCommittedResource(
 				&heapType,
@@ -805,6 +860,7 @@ static void RecreateResources(Render* render) {
 				&vBufferOptimizedClearValue,
 				IID_PPV_ARGS(render->vBuffer.put())
 			));
+            render->vBuffer->SetName(L"VBuffer");
 
             render->vBufferRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvBaseHandle, (int)RenderTargets::VBuffer, render->rtvDescriptorSize);
             render->device->CreateRenderTargetView(render->vBuffer.get(), nullptr, render->vBufferRTV);
@@ -818,6 +874,13 @@ static void RecreateResources(Render* render) {
             srvDesc.Texture2D.PlaneSlice = 0;
             srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
             render->device->CreateShaderResourceView(render->vBuffer.get(), &srvDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), VBUFFER_SRV, render->uniDescriptorSize));
+
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+            uavDesc.Format = DXGI_FORMAT_R32_UINT;
+            uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+            uavDesc.Texture2D.MipSlice = 0;
+            uavDesc.Texture2D.PlaneSlice = 0;
+            render->device->CreateUnorderedAccessView(render->vBuffer.get(), nullptr, &uavDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), VBUFFER_UAV, render->uniDescriptorSize));
         }
 
         // Color buffer
@@ -834,6 +897,7 @@ static void RecreateResources(Render* render) {
 				nullptr,
 				IID_PPV_ARGS(render->colorBuffer.put())
 			));
+            render->colorBuffer->SetName(L"Color");
 
             render->colorBufferRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvBaseHandle, (int)RenderTargets::ColorBuffer, render->rtvDescriptorSize);
             render->device->CreateRenderTargetView(render->colorBuffer.get(), nullptr, render->colorBufferRTV);
@@ -869,10 +933,11 @@ static void RecreateResources(Render* render) {
             &heapType,
             D3D12_HEAP_FLAG_NONE,
             &desc,
-            D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
             &depthOptimizedClearValue,
             IID_PPV_ARGS(render->depthStencil.put())
         ));
+        render->depthStencil->SetName(L"DepthStencil");
 
         CD3DX12_CPU_DESCRIPTOR_HANDLE dsvBaseHandle(render->dsvHeap->GetCPUDescriptorHandleForHeapStart());
         render->depthStencilDSV = CD3DX12_CPU_DESCRIPTOR_HANDLE(dsvBaseHandle, (int)DepthStencilTargets::MainDepth, render->dsvDescriptorSize);
@@ -890,6 +955,14 @@ static void RecreateResources(Render* render) {
         CD3DX12_CPU_DESCRIPTOR_HANDLE srvBaseHandle(render->uniHeap->GetCPUDescriptorHandleForHeapStart());
         CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(srvBaseHandle, DEPTHBUFFER_SRV, render->uniDescriptorSize);
         render->device->CreateShaderResourceView(render->depthStencil.get(), &srvDesc, srvHandle);
+/*
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+        uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
+        uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        uavDesc.Texture2D.MipSlice = 0;
+        uavDesc.Texture2D.PlaneSlice = 0;
+        render->device->CreateUnorderedAccessView(render->depthStencil.get(), nullptr, &uavDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), DEPTHBUFFER_SRV, render->uniDescriptorSize));
+*/
     }
 
     /*
@@ -988,6 +1061,27 @@ static void RecreateResources(Render* render) {
         BufferDesc((1 + 3) * NUM_QUEUED_FRAMES, sizeof(UINT))
         .WithName(L"ReadBackBuffer")
         .WithHeapType(D3D12_HEAP_TYPE_READBACK));
+
+    CreateBuffer(render, &render->scratch,
+        BufferDesc(32 * 1024 * 1024, sizeof(BYTE))
+        .WithName(L"Scratch")
+        .WithAS());
+
+    CreateBuffer(render, &render->blasPool,
+        BufferDesc(512 * 1024 * 1024, sizeof(BYTE))
+        .WithAS()
+        .WithName(L"BLASPool"));
+
+    CreateBuffer(render, &render->tlas,
+        BufferDesc(512 * 1024 * 1024, sizeof(BYTE))
+        .WithName(L"TLAS")
+        .WithAS()
+        .WithSRV(TLAS_SRV));
+
+    CreateBuffer(render, &render->tlasInstances,
+        BufferDesc(2 * MAX_INSTANCES * MAX_CLUSTERS, sizeof(D3D12_RAYTRACING_INSTANCE_DESC))
+        .WithName(L"TLASInstances")
+        .WithHeapType(D3D12_HEAP_TYPE_UPLOAD));
 
     /*
      * Root Signature
@@ -1113,6 +1207,14 @@ static void RecreateResources(Render* render) {
 			desc.CS = { render->materialBlobCS->GetBufferPointer(), render->materialBlobCS->GetBufferSize() };
 
 			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->materialPSO.put())));
+        }
+
+        {
+            D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+            desc.pRootSignature = render->drawRootSignature.get();
+            desc.CS = { render->rayTraceBlobCS->GetBufferPointer(), render->rayTraceBlobCS->GetBufferSize() };
+
+            check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->rayTracePSO.put())));
         }
     }
 
@@ -1342,6 +1444,121 @@ static void ReloadScene(Render* render)
             }
         }
     }
+
+    render->rebuildScene = true;
+}
+
+static UINT64 BuildAccelerationStructure(Render* render, const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, D3D12_GPU_VIRTUAL_ADDRESS asAddr)
+{
+    {
+        D3D12_RESOURCE_BARRIER barriers[] = {
+            CD3DX12_RESOURCE_BARRIER::UAV(render->scratch.resource.get()),
+        };
+        render->commandList->ResourceBarrier(_countof(barriers), barriers);
+    }
+
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo;
+    render->device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuildInfo);
+
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {
+        .DestAccelerationStructureData = asAddr,
+        .Inputs = inputs,
+        .SourceAccelerationStructureData = 0,
+        .ScratchAccelerationStructureData = render->scratch.resource->GetGPUVirtualAddress()
+    };
+
+    render->commandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+
+    return prebuildInfo.ResultDataMaxSizeInBytes; // TODO: do GPU compaction after build?
+}
+
+static void RebuildScene(Render* render)
+{
+    std::vector<D3D12_GPU_VIRTUAL_ADDRESS> blasAddrs;
+
+    D3D12_GPU_VIRTUAL_ADDRESS blasAddr = render->blasPool.resource->GetGPUVirtualAddress();
+    for (int ic = 0; ic < render->numClusters; ++ic)
+    {
+        const Cluster& cluster = render->clustersCpu[ic];
+
+        D3D12_RAYTRACING_GEOMETRY_DESC geometryDesc = {
+            .Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES,
+            .Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE,
+            .Triangles = {
+                .Transform3x4 = 0,
+                .IndexFormat = DXGI_FORMAT_R32_UINT,
+                .VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT,
+                .IndexCount = cluster.PrimitiveCount * 3,
+                .VertexCount = cluster.VertexCount,
+                .IndexBuffer = render->indexDataBuffer.resource->GetGPUVirtualAddress() + cluster.PrimitiveStart * 3 * sizeof(UINT),
+                .VertexBuffer = {
+                    .StartAddress = render->positionsBuffer.resource->GetGPUVirtualAddress() + cluster.VertexStart * sizeof(float3),
+                    .StrideInBytes = sizeof(float3),
+                }
+            }
+        };
+
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
+            .Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL,
+            .Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE,
+            .NumDescs = 1,
+            .DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
+            .pGeometryDescs = &geometryDesc
+        };
+
+        UINT64 buildSize = BuildAccelerationStructure(render, inputs, blasAddr);
+        blasAddrs.push_back(blasAddr);
+        blasAddr += (buildSize & ~255) + 256;
+    }
+
+    {
+        D3D12_RESOURCE_BARRIER barriers[] = {
+            CD3DX12_RESOURCE_BARRIER::UAV(render->blasPool.resource.get()),
+        };
+        render->commandList->ResourceBarrier(_countof(barriers), barriers);
+    }
+
+    {
+        D3D12_RAYTRACING_INSTANCE_DESC* instanceDescs;
+        render->tlasInstances.resource->Map(0, nullptr, reinterpret_cast<void**>(&instanceDescs));
+
+        UINT currInstance = 0;
+        for (UINT ii = 0; ii < render->numInstances; ++ii)
+        {
+            const Instance& instance = render->instancesCpu[ii];
+            const Mesh& mesh = render->meshesCpu[instance.MeshIndex];
+
+            for (UINT ic = mesh.ClusterStart; ic < mesh.ClusterStart + mesh.ClusterCount; ++ic)
+            {
+                D3D12_RAYTRACING_INSTANCE_DESC instanceDesc = {
+                    .Transform = {
+                        { instance.ModelMatrix.m11, instance.ModelMatrix.m21, instance.ModelMatrix.m31, instance.ModelMatrix.m41 },
+                        { instance.ModelMatrix.m12, instance.ModelMatrix.m22, instance.ModelMatrix.m32, instance.ModelMatrix.m42 },
+                        { instance.ModelMatrix.m13, instance.ModelMatrix.m23, instance.ModelMatrix.m33, instance.ModelMatrix.m43 },
+                    },
+                    .InstanceID = ii,
+                    .InstanceMask = 0,
+                    .InstanceContributionToHitGroupIndex = 0,
+                    .Flags = 0,
+                    .AccelerationStructure = blasAddrs[ic],
+                };
+                instanceDescs[currInstance] = instanceDesc;
+                currInstance += 1;
+            }
+        }
+
+        render->tlasInstances.resource->Unmap(0, nullptr);
+
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
+            .Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL,
+            .Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE,
+            .NumDescs = currInstance,
+            .DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
+            .InstanceDescs = render->tlasInstances.resource->GetGPUVirtualAddress()
+        };
+
+        BuildAccelerationStructure(render, inputs, render->tlas.resource->GetGPUVirtualAddress());
+    }
 }
 
 void ExtractPlanesD3D(plane* planes, const float4x4& comboMatrix, bool normalizePlanes)
@@ -1430,6 +1647,12 @@ void Draw(Render* render)
 
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
     check_hresult(render->commandList->Reset(render->commandAllocators[render->frameIndex].get(), render->drawMeshPSO.get()));
+
+    if (render->rebuildScene)
+    {
+        RebuildScene(render);
+        render->rebuildScene = false;
+    }
 
     CenterExtentsAABB testAABB{ float3(1.0f, 1.0, 1.0f), float3(1.0f, 1.0f, 1.0f) };
     float4x4 testMatrix = make_float4x4_translation(float3(2.0f, 0.0, -2.0f));
@@ -1584,9 +1807,33 @@ void Draw(Render* render)
     };
     render->commandList->SetDescriptorHeaps(_countof(heaps), heaps);
 
-    // Work Graph execution
-    if (render->supportsWorkGraph && render->workGraph)
+    if (render->supportsRayTracing && render->traceVisibility)
     {
+        {
+            D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::UAV(render->tlas.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+            };
+            render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
+
+        render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
+        render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
+
+        render->commandList->SetPipelineState(render->rayTracePSO.get());
+        render->commandList->Dispatch((render->width + 7) / 8, (render->height + 7) / 8, 1);
+
+        {
+            D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+            };
+            render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
+    }
+    else if (render->supportsWorkGraph && render->workGraph)
+    {
+        // Work Graph execution
         {
             D3D12_RESOURCE_BARRIER barriers[] = {
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
@@ -1594,6 +1841,7 @@ void Draw(Render* render)
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
                 CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE),
             };
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
         }
@@ -1634,6 +1882,7 @@ void Draw(Render* render)
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
                 CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ),
                 CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
             };
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
@@ -1678,6 +1927,7 @@ void Draw(Render* render)
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
                 CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE),
             };
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
         }
@@ -1698,6 +1948,7 @@ void Draw(Render* render)
         {
             D3D12_RESOURCE_BARRIER barriers[] = {
                 CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ),
                 CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
             };
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
