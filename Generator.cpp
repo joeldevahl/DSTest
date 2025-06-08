@@ -197,6 +197,9 @@ void Generate(const char* filename, int outputLod)
 	cgltf_result result = cgltf_parse_file(&options, filename, &data);
 	assert(result == cgltf_result_success);
 
+	result = cgltf_load_buffers(&options, data, nullptr);
+	assert(result == cgltf_result_success);
+
 	for (int m = 0; m < data->meshes_count; ++m)
 	{
 		UINT cluster_start = out_clusters.size();
@@ -376,7 +379,7 @@ void Generate(const char* filename, int outputLod)
 
 			bool done = false;
 			int ilod = 0;
-			while (!done)
+			while (!done && ilod < outputLod)
 			{
 				auto& prevLod = context.lods.at(ilod);
 				ilod += 1;
