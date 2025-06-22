@@ -1552,35 +1552,15 @@ static void ReloadScene(Render* render)
     render->rebuildScene = true;
 }
 
-static UINT64 BuildAccelerationStructure(Render* render, const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, D3D12_GPU_VIRTUAL_ADDRESS asAddr)
-{
-    {
-        D3D12_RESOURCE_BARRIER barriers[] = {
-            CD3DX12_RESOURCE_BARRIER::UAV(render->scratch.resource.get()),
-        };
-        render->commandList->ResourceBarrier(_countof(barriers), barriers);
-    }
-
-    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo;
-    render->device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuildInfo);
-
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {
-        .DestAccelerationStructureData = asAddr,
-        .Inputs = inputs,
-        .SourceAccelerationStructureData = 0,
-        .ScratchAccelerationStructureData = render->scratch.resource->GetGPUVirtualAddress()
-    };
-
-    render->commandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
-
-    return prebuildInfo.ResultDataMaxSizeInBytes; // TODO: do GPU compaction after build?
-}
-
 static void RebuildScene(Render* render)
 {
     std::vector<D3D12_GPU_VIRTUAL_ADDRESS> blasAddrs;
 
-    D3D12_GPU_VIRTUAL_ADDRESS blasAddr = render->blasPool.resource->GetGPUVirtualAddress();
+    D3D12_GPU_VIRTUAL_ADDRESS scratchStart = render->scratch.addressRange.StartAddress;
+    D3D12_GPU_VIRTUAL_ADDRESS scratchEnd = scratchStart + render->scratch.addressRange.SizeInBytes;
+    D3D12_GPU_VIRTUAL_ADDRESS scratchCurr = scratchStart;
+
+    D3D12_GPU_VIRTUAL_ADDRESS blasAddr = render->blasPool.addressRange.StartAddress;
     for (int ic = 0; ic < render->numClusters; ++ic)
     {
         const Cluster& cluster = render->clustersCpu[ic];
@@ -1610,14 +1590,39 @@ static void RebuildScene(Render* render)
             .pGeometryDescs = &geometryDesc
         };
 
-        UINT64 buildSize = BuildAccelerationStructure(render, inputs, blasAddr);
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo;
+        render->device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuildInfo);
+
+        if (scratchCurr + prebuildInfo.ScratchDataSizeInBytes > scratchEnd)
+        {
+            scratchCurr = scratchStart;
+
+            D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::UAV(render->scratch.resource.get()),
+            };
+            render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
+
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {
+            .DestAccelerationStructureData = blasAddr,
+            .Inputs = inputs,
+            .SourceAccelerationStructureData = 0,
+            .ScratchAccelerationStructureData = scratchCurr,
+        };
+
+        render->commandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+
         blasAddrs.push_back(blasAddr);
-        blasAddr += (buildSize & ~255) + 256;
+        blasAddr += (prebuildInfo.ResultDataMaxSizeInBytes & ~255) + 256;
+        scratchCurr += (prebuildInfo.ScratchDataSizeInBytes & ~255) + 256;
     }
 
     {
+        scratchCurr = scratchStart;
+
         D3D12_RESOURCE_BARRIER barriers[] = {
             CD3DX12_RESOURCE_BARRIER::UAV(render->blasPool.resource.get()),
+            CD3DX12_RESOURCE_BARRIER::UAV(render->scratch.resource.get()),
         };
         render->commandList->ResourceBarrier(_countof(barriers), barriers);
     }
@@ -1661,7 +1666,14 @@ static void RebuildScene(Render* render)
             .InstanceDescs = render->tlasInstances.resource->GetGPUVirtualAddress()
         };
 
-        BuildAccelerationStructure(render, inputs, render->tlas.resource->GetGPUVirtualAddress());
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {
+            .DestAccelerationStructureData = render->tlas.resource->GetGPUVirtualAddress(),
+            .Inputs = inputs,
+            .SourceAccelerationStructureData = 0,
+            .ScratchAccelerationStructureData = scratchCurr,
+        };
+
+        render->commandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
     }
 }
 
