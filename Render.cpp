@@ -260,6 +260,7 @@ struct Render
     Buffer blasPool;
     Buffer tlas;
     Buffer tlasInstances;
+    Buffer shaderIDs;
 
     com_ptr<ID3D12RootSignature> drawRootSignature;
     com_ptr<ID3D12RootSignature> drawWireRootSignature;
@@ -274,7 +275,7 @@ struct Render
     com_ptr<ID3D12StateObject> workGraphSO;
     D3D12_PROGRAM_IDENTIFIER workGraphIdentifier;
 
-    com_ptr<ID3D12PipelineState> rayTracePSO;
+    com_ptr<ID3D12StateObject> rayTraceSO;
 
     com_ptr<ID3D12GraphicsCommandList10> commandList;
 
@@ -311,7 +312,7 @@ struct Render
     com_ptr<ID3DBlob> clusterCullingBlobCS;
     com_ptr<ID3DBlob> materialBlobCS;
     com_ptr<ID3DBlob> workGraphBlob;
-    com_ptr<ID3DBlob> rayTraceBlobCS;
+    com_ptr<ID3DBlob> rayTraceBlob;
     com_ptr<ID3D12RootSignature> globalRootSignature;
 
     bool recreateResources = true;
@@ -322,7 +323,7 @@ struct Render
     bool fastMove = false;
     bool lockedCullingCamera = false;
     bool workGraph = false;
-    bool traceVisibility = true;
+    bool traceVisibility = false;
 };
 
 struct handle_closer
@@ -397,6 +398,28 @@ static HRESULT ReadDataFromFile(LPCWSTR filename, byte** data, UINT* size)
     return S_OK;
 }
 
+static HRESULT WriteDataToFile(LPCWSTR filename, const byte* data, UINT size)
+{
+    CREATEFILE2_EXTENDED_PARAMETERS extendedParams = {};
+    extendedParams.dwSize = sizeof(CREATEFILE2_EXTENDED_PARAMETERS);
+    extendedParams.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+    extendedParams.dwFileFlags = FILE_FLAG_SEQUENTIAL_SCAN;
+    extendedParams.dwSecurityQosFlags = SECURITY_ANONYMOUS;
+    extendedParams.lpSecurityAttributes = nullptr;
+    extendedParams.hTemplateFile = nullptr;
+    ScopedHandle file(CreateFile2(filename, GENERIC_WRITE, 0, CREATE_ALWAYS, &extendedParams));
+    if (file.get() == INVALID_HANDLE_VALUE)
+    {
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+    DWORD bytesWritten;
+    if (!WriteFile(file.get(), data, size, &bytesWritten, nullptr) || bytesWritten != size)
+    {
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+    return S_OK;
+}
+
 static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWSTR shader_name, LPCWSTR target)
 {
     struct
@@ -427,12 +450,12 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
     }
 
     arguments.push_back(L"-I");
-    arguments.push_back(L"C:/Code/DSTest/");
+    arguments.push_back(L"C:\\Code\\DSTest\\");
 
     arguments.push_back(L"/Zi");
     arguments.push_back(L"/Zss");
     arguments.push_back(L"/Fd");
-    arguments.push_back(L".\\shaderpdbs\\");
+    arguments.push_back(L"C:\\Code\\DSTest\\shaderpdbs\\");
 
     DxcBuffer sourceBuffer;
     sourceBuffer.Ptr = source->GetBufferPointer();
@@ -459,22 +482,30 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
         __debugbreak();
     }
 
-    // Build a reflector for the existing container
-    //com_ptr<IDxcContainerReflection> pDxcContainerReflection;
-    //DxcCreateInstance(CLSID_DxcContainerReflection, IID_PPV_ARGS(&pDxcContainerReflection));
+	free(shaderSource.data);
+/*
+    com_ptr<ID3DBlob> shaderHash;
+    compileResult->GetOutput(DXC_OUT_SHADER_HASH, IID_PPV_ARGS(&shaderHash), nullptr);
 
-    // Find which part index contains the debug data and retrieve it:
-    //UINT32 debugPartIndex;
-    //pDxcContainerReflection->FindFirstPartKind('ILDB', &debugPartIndex);
-    //com_ptr<IDxcBlob> pPDB;
-    //pDxcContainerReflection->GetPartContent(debugPartIndex, pPDB.put());
+    com_ptr<ID3DBlob> pdb;
+    compileResult->GetOutput(DXC_OUT_PDB, IID_PPV_ARGS(&pdb), nullptr);
 
-    // DxilShaderDebugName is defined in DxilContainer.h
-    //pDebugNameData = reinterpret_cast<const DxilShaderDebugName*>(pPDBName->GetBufferPointer());
-    //const char* pName = reinterpret_cast<const char*>(pDebugNameData + 1);
+    if (shaderHash && pdb)
+    {
+		WCHAR path[MAX_PATH] = {};
+        WCHAR whash[128] = {};
 
+        DxcShaderHash* hash = (DxcShaderHash*)shaderHash->GetBufferPointer();
+        std::mbstate_t state = std::mbstate_t();
+        mbsrtowcs(whash, (const char**)&hash->HashDigest, _countof(hash->HashDigest), &state);
+        _snwprintf(path, MAX_PATH, L"C:\\Code\\DSTest\\shaderpdbs\\%s.pdb", whash);
+        
+        WriteDataToFile(path, (byte*)pdb->GetBufferPointer(), pdb->GetBufferSize());
+    }
+*/
     com_ptr<ID3DBlob> object;
     compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&object), nullptr);
+
     return object;
 }
 
@@ -491,7 +522,7 @@ static bool CompileShaders(Render* render)
     if (render->supportsWorkGraph)
         render->workGraphBlob = CompileShader(render, nullptr, L"WorkGraph.hlsl", L"lib_6_9");
     if (render->supportsRayTracing)
-        render->rayTraceBlobCS = CompileShader(render, L"main", L"RayTrace.hlsl", L"cs_6_6");
+        render->rayTraceBlob = CompileShader(render, nullptr, L"RayTrace.hlsl", L"lib_6_6");
 
     return true;
 }
@@ -702,7 +733,7 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
     {
         com_ptr<IDXGIAdapter4> hardwareAdapter;
         GetHardwareAdapter(render->dxgiFactory.get(), hardwareAdapter.put());
-        check_hresult(D3D12CreateDevice(hardwareAdapter.get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(render->device.put())));
+        check_hresult(D3D12CreateDevice(hardwareAdapter.get(), D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(render->device.put())));
     }
 
     {
@@ -1065,7 +1096,7 @@ static void RecreateResources(Render* render) {
     CreateBuffer(render, &render->scratch,
         BufferDesc(32 * 1024 * 1024, sizeof(BYTE))
         .WithName(L"Scratch")
-        .WithAS());
+        .WithUAV());
 
     CreateBuffer(render, &render->blasPool,
         BufferDesc(512 * 1024 * 1024, sizeof(BYTE))
@@ -1081,6 +1112,11 @@ static void RecreateResources(Render* render) {
     CreateBuffer(render, &render->tlasInstances,
         BufferDesc(2 * MAX_INSTANCES * MAX_CLUSTERS, sizeof(D3D12_RAYTRACING_INSTANCE_DESC))
         .WithName(L"TLASInstances")
+        .WithHeapType(D3D12_HEAP_TYPE_UPLOAD));
+
+    CreateBuffer(render, &render->shaderIDs,
+        BufferDesc(3, D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT)
+        .WithName(L"ShaderIDs")
         .WithHeapType(D3D12_HEAP_TYPE_UPLOAD));
 
     /*
@@ -1209,6 +1245,7 @@ static void RecreateResources(Render* render) {
 			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->materialPSO.put())));
         }
 
+        /*
         {
             D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
             desc.pRootSignature = render->drawRootSignature.get();
@@ -1216,11 +1253,13 @@ static void RecreateResources(Render* render) {
 
             check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->rayTracePSO.put())));
         }
+        */
     }
 
     /*
     * Work Graph
     */
+#if 0
     if (render->supportsWorkGraph)
     {
         render->device->CreateRootSignatureFromSubobjectInLibrary(0,
@@ -1301,6 +1340,71 @@ static void RecreateResources(Render* render) {
             CreateBuffer(render, &render->workGraphBackingMemory, BufferDesc(memReqs.MaxSizeInBytes, 1).WithUAV().WithName(L"WorkGraphBackingMemory"));
 
         CreateBuffer(render, &render->workGraphNodeLocalRootArgumentsTable, BufferDesc(4, 4).WithName(L"WorkGraphNodeLocalRootArgumentsTable"));
+    }
+#endif
+
+    if (render->supportsRayTracing)
+    {
+        D3D12_DXIL_LIBRARY_DESC lib = {
+            { render->rayTraceBlob->GetBufferPointer(), render->rayTraceBlob->GetBufferSize() },
+            0,
+            nullptr,
+        };
+
+        D3D12_HIT_GROUP_DESC hitGroup = {
+            L"HitGroup",
+            D3D12_HIT_GROUP_TYPE_TRIANGLES,
+            nullptr,
+            L"ClosestHit",
+            nullptr,
+        };
+
+        D3D12_RAYTRACING_SHADER_CONFIG shaderCfg = { 20, 8 };
+
+        D3D12_GLOBAL_ROOT_SIGNATURE globalSig = { render->drawRootSignature.get() }; // TODO
+
+        D3D12_RAYTRACING_PIPELINE_CONFIG pipelineCfg = { 1 };
+         
+        D3D12_STATE_SUBOBJECT subobjects[] = {
+            { D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY, &lib },
+            { D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP, &hitGroup},
+            { D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG, &shaderCfg},
+            { D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE, &globalSig},
+            { D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG, &pipelineCfg}
+        };
+        
+        D3D12_STATE_OBJECT_DESC desc = {
+            D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE,
+            std::size(subobjects),
+            subobjects
+        };
+
+        render->device->CreateStateObject(&desc, IID_PPV_ARGS(render->rayTraceSO.put()));
+
+        ID3D12StateObjectProperties* props;
+        render->rayTraceSO->QueryInterface(&props);
+
+        auto writeId = [&](const wchar_t* name) {
+
+            };
+
+        LPCWCHAR ids[] = {
+            L"RayGeneration",
+            L"Miss",
+            L"HitGroup",
+        };
+
+        void* data;
+        render->shaderIDs.resource->Map(0, nullptr, &data);
+        for (int i = 0; i < std::size(ids); ++i)
+        {
+            void* id = props->GetShaderIdentifier(ids[i]);
+            memcpy(data, id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+            data = static_cast<char*>(data) + D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT;
+        }
+        render->shaderIDs.resource->Unmap(0, nullptr);
+
+        props->Release();
     }
 
     check_hresult(render->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, render->commandAllocators[render->frameIndex].get(), nullptr, IID_PPV_ARGS(render->commandList.put())));
@@ -1658,7 +1762,6 @@ void Draw(Render* render)
     float4x4 testMatrix = make_float4x4_translation(float3(2.0f, 0.0, -2.0f));
     CenterExtentsAABB resultAABB = TransformAABB(testAABB, testMatrix);
 
-
     D3D12_RANGE readbackBufferRange{
         (1 + 3) * sizeof(UINT) * render->frameIndex,
         (1 + 3) * sizeof(UINT) * (render->frameIndex + 1),
@@ -1697,9 +1800,9 @@ void Draw(Render* render)
         if (cam->pitch > PI_HALF) cam->pitch = PI_HALF;
         ImGui::ResetMouseDragDelta();
 
-        float4x4 rotMat = make_float4x4_rotation_y(cam->yaw)
+        float4x4 rotMat = make_float4x4_rotation_z(cam->yaw)
             * make_float4x4_rotation_x(cam->pitch);
-        float3 forward = float3(rotMat.m13, rotMat.m23, rotMat.m33);
+        float3 forward = float3(rotMat.m12, rotMat.m22, rotMat.m32);
         float3 right = float3(rotMat.m11, rotMat.m21, rotMat.m31);
 
         bool w_pressed = ImGui::IsKeyDown(ImGuiKey_W);
@@ -1712,7 +1815,7 @@ void Draw(Render* render)
             cam->pos += forward * dist;
         if (a_pressed)
             cam->pos += right * dist;
-        if (s_pressed)
+        if (s_pressed) 
             cam->pos -= forward * dist;
         if (d_pressed)
             cam->pos -= right * dist;
@@ -1813,20 +1916,32 @@ void Draw(Render* render)
             D3D12_RESOURCE_BARRIER barriers[] = {
                 CD3DX12_RESOURCE_BARRIER::UAV(render->tlas.resource.get()),
                 CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE),
             };
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
         }
 
+        render->commandList->RSSetViewports(1, &render->viewport);
+        render->commandList->RSSetScissorRects(1, &render->scissorRect);
+        render->commandList->ClearDepthStencilView(render->depthStencilDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+        render->commandList->SetPipelineState1(render->rayTraceSO.get());
         render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
         render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
-
-        render->commandList->SetPipelineState(render->rayTracePSO.get());
-        render->commandList->Dispatch((render->width + 7) / 8, (render->height + 7) / 8, 1);
+        D3D12_DISPATCH_RAYS_DESC rayDesc = {};
+        rayDesc.RayGenerationShaderRecord = { render->shaderIDs.addressRange.StartAddress, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES };
+		rayDesc.MissShaderTable = { render->shaderIDs.addressRange.StartAddress + D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES };
+	    rayDesc.HitGroupTable = { render->shaderIDs.addressRange.StartAddress + 2 * D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES };
+        rayDesc.Width = render->width;
+        rayDesc.Height = render->height;
+        rayDesc.Depth = 1;
+        render->commandList->DispatchRays(&rayDesc);
 
         {
             D3D12_RESOURCE_BARRIER barriers[] = {
                 CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ),
                 CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ),
             };
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
         }
@@ -1992,12 +2107,25 @@ void Draw(Render* render)
         ImGui::PopStyleVar();
     }
 
+    if (!render->supportsRayTracing)
+    {
+        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+    }
+    ImGui::Checkbox("Ray Trace", &render->traceVisibility);
+    if (!render->supportsRayTracing)
+    {
+        ImGui::PopItemFlag(); 
+        ImGui::PopStyleVar();
+    }
+
     ImGui::End();
     ImGui::Render();
 
     render->commandList->OMSetRenderTargets(1, &render->colorBufferRTV, FALSE, nullptr);
     render->commandList->SetGraphicsRootSignature(render->drawWireRootSignature.get());
     render->commandList->SetPipelineState(render->drawWirePSO.get());
+    render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
     render->commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
     D3D12_VERTEX_BUFFER_VIEW vbView{
         wireContainer->vertexBuffer.resource->GetGPUVirtualAddress(),
