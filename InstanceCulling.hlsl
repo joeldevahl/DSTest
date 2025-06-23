@@ -15,7 +15,7 @@ void main(uint dtid : SV_DispatchThreadID)
 	uint offset = 0;
 	visibleInstancesCounter.InterlockedAdd(0, 1, offset); // TODO: restructure this dispatch to do one instance per wave
 	
-	if (offset + 1 < MAX_ELEMENTS)
+	if (offset < MAX_VISIBLE_INSTANCES)
 	{
 		RWByteAddressBuffer visibleInstances = ResourceDescriptorHeap[VISIBLE_INSTANCES_UAV];
 		visibleInstances.Store(offset * 4, dtid);

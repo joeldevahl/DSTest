@@ -65,7 +65,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
                 if (ia >= numArgs)
                     return -1;
 
-                int numBytes = wcstombs(nullptr, args[ia], 0) + 1;
+                size_t numBytes = wcstombs(nullptr, args[ia], 0) + 1;
                 generatorFileName = new char[numBytes];
 
                 numBytes = wcstombs(generatorFileName, args[ia], numBytes);

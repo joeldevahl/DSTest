@@ -392,7 +392,7 @@ void Generate(const char* filename, int outputLod)
 
 					// First loop over all triangles to count the nuber of times each edge occurs
 					std::unordered_map<uint64_t, int> edgeCounterMap;
-					for (int t = 0; t < meshlet.triangle_count; ++t)
+					for (uint t = 0; t < meshlet.triangle_count; ++t)
 					{
 						int o = meshlet.triangle_offset + 3 * t;
 						int i0 = prevLod.meshletTriangles[o + 0];
@@ -510,7 +510,7 @@ void Generate(const char* filename, int outputLod)
 						int ml = l.set[c];
 						meshopt_Meshlet& meshlet = prevLod.meshlets[ml];
 
-						for (int i = 0; i < 3 * meshlet.triangle_count; ++i)
+						for (uint i = 0; i < 3 * meshlet.triangle_count; ++i)
 						{
 							int localIndex = prevLod.meshletTriangles[meshlet.triangle_offset + i];
 							int globalIndex = prevLod.meshletVertices[meshlet.vertex_offset + localIndex];
@@ -582,7 +582,7 @@ void Generate(const char* filename, int outputLod)
 						float3 {FLT_MIN, FLT_MIN, FLT_MIN},
 					};
 
-					for (int v = 0; v < meshlet.vertex_count; ++v)
+					for (uint v = 0; v < meshlet.vertex_count; ++v)
 					{
 						int vi = lod.meshletVertices[meshlet.vertex_offset + v];
 						CpuVertex& vert = context.vertices[vi];
@@ -596,7 +596,7 @@ void Generate(const char* filename, int outputLod)
 					}
 
 					UINT outputTriangleOffset = out_indices.size() / 3;
-					for (int t = 0; t < meshlet.triangle_count; ++t)
+					for (uint t = 0; t < meshlet.triangle_count; ++t)
 					{
 						int o = meshlet.triangle_offset + 3 * t;
 						int i0 = lod.meshletTriangles[o + 0];

@@ -78,7 +78,7 @@ void InstanceCulling(
 	uint visibleInstanceIndex = 0;
 	visibleInstancesCounter.InterlockedAdd(0, 1, visibleInstanceIndex);
 	
-	if (visibleInstanceIndex >= MAX_ELEMENTS)
+	if (visibleInstanceIndex >= MAX_VISIBLE_INSTANCES)
         return;
 
 	RWByteAddressBuffer visibleInstances = ResourceDescriptorHeap[VISIBLE_INSTANCES_UAV];
@@ -120,7 +120,7 @@ void ClusterCulling(
     RWByteAddressBuffer visibleClustersCounter = ResourceDescriptorHeap[VISIBLE_CLUSTERS_COUNTER_UAV];
 	visibleClustersCounter.InterlockedAdd(0, 1, visibleClusterIndex);
 
-	if (visibleClusterIndex >= MAX_ELEMENTS) 
+	if (visibleClusterIndex >= MAX_VISIBLE_CLUSTERS) 
         return;
          
 	uint val = ((mesh.ClusterStart + clusterIndex) & 0x0000ffff) | (inputs.visibleInstanceIndex << 16);

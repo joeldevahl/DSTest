@@ -22,7 +22,7 @@ using winrt::check_bool;
 
 #define NUM_QUEUED_FRAMES 3
 
-#define MAX_INSTANCES UINT16_MAX
+#define MAX_INSTANCES 4096
 #define MAX_CLUSTERS UINT16_MAX
 #define MAX_VERTICES (4 * 1024 * 1024)
 #define MAX_INDICES (16 * 1024 * 1024)
@@ -466,7 +466,7 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
     utils->CreateDefaultIncludeHandler(includeHandler.put());
 
     com_ptr<IDxcResult> compileResult;
-    winrt::hresult result = check_hresult(compiler->Compile(&sourceBuffer, arguments.data(), arguments.size(), includeHandler.get(), IID_PPV_ARGS(&compileResult)));
+    winrt::hresult result = check_hresult(compiler->Compile(&sourceBuffer, arguments.data(), (UINT32)arguments.size(), includeHandler.get(), IID_PPV_ARGS(&compileResult)));
 
     // Error Handling. Note that this will also include warnings unless disabled.
     com_ptr<IDxcBlobUtf8> errors;
@@ -1501,15 +1501,15 @@ static void ReloadScene(Render* render)
     OpenFileForLoading(render, L"materials.raw", materialsFile, materialsSize);
     render->numInstances = instancesSize / sizeof(Instance);
     render->numClusters = clustersSize / sizeof(Cluster);
-    render->maxNumClusters = MAX_ELEMENTS;
+    render->maxNumClusters = MAX_VISIBLE_CLUSTERS; // TODO: max visible and max existing should be different
 
     UINT32 numVertices = positionsSize / sizeof(float3);
     UINT32 numIndices = indicesSize / sizeof(UINT);
     UINT32 numMaterials = materialsSize / sizeof(Material);
     UINT32 numMeshes = meshesSize / sizeof(Mesh);
 
-    assert(render->numInstances <= MAX_ELEMENTS);
-    assert(render->numClusters <= MAX_ELEMENTS);
+    assert(render->numInstances <= MAX_VISIBLE_INSTANCES);
+    assert(render->numClusters <= MAX_VISIBLE_CLUSTERS);
     assert(numVertices <= MAX_VERTICES); // Assumes all vertex data has the same count
     assert(numIndices <= MAX_INDICES);
     assert(numMaterials <= MAX_MATERIALS);
@@ -1561,7 +1561,7 @@ static void RebuildScene(Render* render)
     D3D12_GPU_VIRTUAL_ADDRESS scratchCurr = scratchStart;
 
     D3D12_GPU_VIRTUAL_ADDRESS blasAddr = render->blasPool.addressRange.StartAddress;
-    for (int ic = 0; ic < render->numClusters; ++ic)
+    for (uint ic = 0; ic < render->numClusters; ++ic)
     {
         const Cluster& cluster = render->clustersCpu[ic];
 
@@ -1660,7 +1660,7 @@ static void RebuildScene(Render* render)
 
         D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
             .Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL,
-            .Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE,
+            .Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE,
             .NumDescs = currInstance,
             .DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
             .InstanceDescs = render->tlasInstances.resource->GetGPUVirtualAddress()
@@ -1889,7 +1889,7 @@ void Draw(Render* render)
             wireContainer->AddFrustum(invViewProj);
         }
 
-        for (int i = 0; i < render->numInstances; ++i)
+        for (uint i = 0; i < render->numInstances; ++i)
         {
             Instance* instance = render->instancesCpu + i;
 
@@ -1902,7 +1902,7 @@ void Draw(Render* render)
             if (render->visualizeClusters)
             {
                 Mesh* mesh = render->meshesCpu + instance->MeshIndex;
-                for (int c = 0; c < mesh->ClusterCount; ++c)
+                for (uint c = 0; c < mesh->ClusterCount; ++c)
                 {
                     Cluster* cluster = render->clustersCpu + mesh->ClusterStart + c;
 

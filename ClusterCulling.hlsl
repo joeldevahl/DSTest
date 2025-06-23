@@ -4,7 +4,7 @@
 void main(uint dtid : SV_DispatchThreadID)
 {
 	RWByteAddressBuffer visibleInstancesCounter = ResourceDescriptorHeap[VISIBLE_INSTANCES_COUNTER_UAV];
-	if (dtid >= min(visibleInstancesCounter.Load(0), MAX_ELEMENTS))
+	if (dtid >= min(visibleInstancesCounter.Load(0), MAX_VISIBLE_INSTANCES))
 		return;
 
 	ByteAddressBuffer visibleInstances = ResourceDescriptorHeap[VISIBLE_INSTANCES_SRV];
@@ -27,7 +27,7 @@ void main(uint dtid : SV_DispatchThreadID)
 		uint offset = 0;
 		visibleClustersCounter.InterlockedAdd(0, 1, offset); // TODO: restructure this dispatch to do one instance per wave
 
-		if (offset + mesh.ClusterCount < MAX_ELEMENTS)
+		if (offset < MAX_VISIBLE_CLUSTERS)
 		{
 			uint val = ((mesh.ClusterStart + i) & 0x0000ffff) | (dtid << 16);
 			visibleClusters.Store(offset * 4, val);

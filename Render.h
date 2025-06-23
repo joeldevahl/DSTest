@@ -23,7 +23,7 @@ inline CenterExtentsAABB MinMaxToCenterExtents(const MinMaxAABB& mm)
 
 inline float3 abs(float3 const& val)
 {
-	return float3(fabs(val.x), fabs(val.y), fabs(val.z));
+	return float3(fabsf(val.x), fabsf(val.y), fabsf(val.z));
 } 
 
 inline CenterExtentsAABB TransformAABB(const CenterExtentsAABB& in, const float4x4& mat)
@@ -31,9 +31,9 @@ inline CenterExtentsAABB TransformAABB(const CenterExtentsAABB& in, const float4
 	float3 center = transform(in.Center, mat);
 
 	float4x4 absmat = float4x4(
-		fabs(mat.m11), fabs(mat.m12), fabs(mat.m13), 0.0f,
-		fabs(mat.m21), fabs(mat.m22), fabs(mat.m23), 0.0f,
-		fabs(mat.m31), fabs(mat.m32), fabs(mat.m33), 0.0f,
+		fabsf(mat.m11), fabsf(mat.m12), fabsf(mat.m13), 0.0f,
+		fabsf(mat.m21), fabsf(mat.m22), fabsf(mat.m23), 0.0f,
+		fabsf(mat.m31), fabsf(mat.m32), fabsf(mat.m33), 0.0f,
 		0.0f, 0.0f, 0.0f, 1.0f
 	);
 
