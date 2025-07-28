@@ -41,6 +41,7 @@ enum class RenderTargets : int
 
     VBuffer,
     ColorBuffer,
+    PreDepthBuffer, // Not actual depth buffer, used for things that needs to write depth from UAV and later composed to depth
 
     RenderTargetCount,
 };
@@ -209,6 +210,7 @@ struct Render
     com_ptr<ID3D12DescriptorHeap> rtvHeap;
     com_ptr<ID3D12DescriptorHeap> dsvHeap;
     com_ptr<ID3D12DescriptorHeap> uniHeap;
+    com_ptr<ID3D12DescriptorHeap> uniHeapCpuMirror; // Used for CPU readable descriptors, only one so far
     UINT rtvDescriptorSize = 0;
     UINT dsvDescriptorSize = 0;
     UINT uniDescriptorSize = 0;
@@ -219,6 +221,9 @@ struct Render
 
     com_ptr<ID3D12Resource> vBuffer;
     CD3DX12_CPU_DESCRIPTOR_HANDLE vBufferRTV;
+
+    com_ptr<ID3D12Resource> preDepth;
+    CD3DX12_CPU_DESCRIPTOR_HANDLE preDepthRTV;
 
     com_ptr<ID3D12Resource> colorBuffer;
     CD3DX12_CPU_DESCRIPTOR_HANDLE colorBufferRTV;
@@ -420,7 +425,7 @@ static HRESULT WriteDataToFile(LPCWSTR filename, const byte* data, UINT size)
     return S_OK;
 }
 
-static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWSTR shader_name, LPCWSTR target)
+static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR shaderName, LPCWSTR entryName, LPCWSTR shaderPath, LPCWSTR target)
 {
     struct
     {
@@ -428,7 +433,7 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
         uint32_t size;
     } shaderSource;
 
-    ReadDataFromFile(shader_name, &shaderSource.data, &shaderSource.size);
+    ReadDataFromFile(shaderPath, &shaderSource.data, &shaderSource.size);
 
     com_ptr<IDxcCompiler3> compiler;
     check_hresult(DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler)));
@@ -443,10 +448,10 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
     arguments.push_back(L"-T");
     arguments.push_back(target);
 
-    if (entry_name)
+    if (entryName)
     {
         arguments.push_back(L"-E");
-        arguments.push_back(entry_name);
+        arguments.push_back(entryName);
     }
 
     arguments.push_back(L"-I");
@@ -454,8 +459,6 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
 
     arguments.push_back(L"/Zi");
     arguments.push_back(L"/Zss");
-    arguments.push_back(L"/Fd");
-    arguments.push_back(L"C:\\Code\\DSTest\\shaderpdbs\\");
 
     DxcBuffer sourceBuffer;
     sourceBuffer.Ptr = source->GetBufferPointer();
@@ -483,26 +486,22 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
     }
 
 	free(shaderSource.data);
-/*
-    com_ptr<ID3DBlob> shaderHash;
-    compileResult->GetOutput(DXC_OUT_SHADER_HASH, IID_PPV_ARGS(&shaderHash), nullptr);
 
+    com_ptr<IDxcBlobWide> outputName;
     com_ptr<ID3DBlob> pdb;
-    compileResult->GetOutput(DXC_OUT_PDB, IID_PPV_ARGS(&pdb), nullptr);
+    compileResult->GetOutput(DXC_OUT_PDB, IID_PPV_ARGS(&pdb), outputName.put());
 
-    if (shaderHash && pdb)
+    if (outputName && pdb)
     {
 		WCHAR path[MAX_PATH] = {};
-        WCHAR whash[128] = {};
 
-        DxcShaderHash* hash = (DxcShaderHash*)shaderHash->GetBufferPointer();
-        std::mbstate_t state = std::mbstate_t();
-        mbsrtowcs(whash, (const char**)&hash->HashDigest, _countof(hash->HashDigest), &state);
-        _snwprintf(path, MAX_PATH, L"C:\\Code\\DSTest\\shaderpdbs\\%s.pdb", whash);
+        LPCWSTR name = outputName->GetStringPointer();
+
+        _snwprintf(path, MAX_PATH, L"C:\\Code\\DSTest\\shaderpdbs\\%s", name);
         
         WriteDataToFile(path, (byte*)pdb->GetBufferPointer(), pdb->GetBufferSize());
     }
-*/
+
     com_ptr<ID3DBlob> object;
     compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&object), nullptr);
 
@@ -511,18 +510,18 @@ static com_ptr<ID3DBlob> CompileShader(Render* render, LPCWSTR entry_name, LPCWS
 
 static bool CompileShaders(Render* render)
 {
-    render->vBufferBlobMS = CompileShader(render, L"main", L"VBufferMS.hlsl", L"ms_6_6");
-    render->vBufferBlobPS = CompileShader(render, L"main", L"VBufferPS.hlsl", L"ps_6_6");
-    render->wireBlobVS = CompileShader(render, L"main", L"WireVS.hlsl", L"vs_6_6");
-    render->wireBlobPS = CompileShader(render, L"main", L"WirePS.hlsl", L"ps_6_6");
-    render->frameSetupBlobCS = CompileShader(render, L"main", L"FrameSetup.hlsl", L"cs_6_6");
-    render->instanceCullingBlobCS = CompileShader(render, L"main", L"InstanceCulling.hlsl", L"cs_6_6");
-    render->clusterCullingBlobCS = CompileShader(render, L"main", L"ClusterCulling.hlsl", L"cs_6_6");
-    render->materialBlobCS = CompileShader(render, L"main", L"Material.hlsl", L"cs_6_6");
+    render->vBufferBlobMS = CompileShader(render, L"VBufferMS", L"main", L"VBufferMS.hlsl", L"ms_6_6");
+    render->vBufferBlobPS = CompileShader(render, L"VBufferPS", L"main", L"VBufferPS.hlsl", L"ps_6_6");
+    render->wireBlobVS = CompileShader(render, L"WireVS", L"main", L"WireVS.hlsl", L"vs_6_6");
+    render->wireBlobPS = CompileShader(render, L"WirePS", L"main", L"WirePS.hlsl", L"ps_6_6");
+    render->frameSetupBlobCS = CompileShader(render, L"FrameSetup", L"main", L"FrameSetup.hlsl", L"cs_6_6");
+    render->instanceCullingBlobCS = CompileShader(render, L"InstanceCulling", L"main", L"InstanceCulling.hlsl", L"cs_6_6");
+    render->clusterCullingBlobCS = CompileShader(render, L"ClusterCulling", L"main", L"ClusterCulling.hlsl", L"cs_6_6");
+    render->materialBlobCS = CompileShader(render, L"Material", L"main", L"Material.hlsl", L"cs_6_6");
     if (render->supportsWorkGraph)
-        render->workGraphBlob = CompileShader(render, nullptr, L"WorkGraph.hlsl", L"lib_6_9");
+        render->workGraphBlob = CompileShader(render, L"WorkGraph", nullptr, L"WorkGraph.hlsl", L"lib_6_9");
     if (render->supportsRayTracing)
-        render->rayTraceBlob = CompileShader(render, nullptr, L"RayTrace.hlsl", L"lib_6_6");
+        render->rayTraceBlob = CompileShader(render, L"RayTrace", nullptr, L"RayTrace.hlsl", L"lib_6_6");
 
     return true;
 }
@@ -805,6 +804,7 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
     render->rtvHeap = CreateDescriptorHeap(render, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, (int)RenderTargets::RenderTargetCount);
     render->dsvHeap = CreateDescriptorHeap(render, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, (int)DepthStencilTargets::DepthStencilTargetCount);
     render->uniHeap = CreateDescriptorHeap(render, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1000000, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE);
+    render->uniHeapCpuMirror = CreateDescriptorHeap(render, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1000000, D3D12_DESCRIPTOR_HEAP_FLAG_NONE);
     render->rtvDescriptorSize = render->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     render->dsvDescriptorSize = render->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
     render->uniDescriptorSize = render->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -864,12 +864,12 @@ static void WaitGraphicsIdle(Render* render)
 }
 
 static void RecreateResources(Render* render) {
+    CD3DX12_CPU_DESCRIPTOR_HANDLE rtvBaseHandle(render->rtvHeap->GetCPUDescriptorHandleForHeapStart());
+
     /*
      * Render Targets
      */
     {
-        CD3DX12_CPU_DESCRIPTOR_HANDLE rtvBaseHandle(render->rtvHeap->GetCPUDescriptorHandleForHeapStart());
-
         // VBuffer
         {
             CD3DX12_HEAP_PROPERTIES heapType(D3D12_HEAP_TYPE_DEFAULT);
@@ -912,6 +912,7 @@ static void RecreateResources(Render* render) {
             uavDesc.Texture2D.MipSlice = 0;
             uavDesc.Texture2D.PlaneSlice = 0;
             render->device->CreateUnorderedAccessView(render->vBuffer.get(), nullptr, &uavDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), VBUFFER_UAV, render->uniDescriptorSize));
+            render->device->CreateUnorderedAccessView(render->vBuffer.get(), nullptr, &uavDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeapCpuMirror->GetCPUDescriptorHandleForHeapStart(), VBUFFER_UAV, render->uniDescriptorSize));
         }
 
         // Color buffer
@@ -986,14 +987,52 @@ static void RecreateResources(Render* render) {
         CD3DX12_CPU_DESCRIPTOR_HANDLE srvBaseHandle(render->uniHeap->GetCPUDescriptorHandleForHeapStart());
         CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(srvBaseHandle, DEPTHBUFFER_SRV, render->uniDescriptorSize);
         render->device->CreateShaderResourceView(render->depthStencil.get(), &srvDesc, srvHandle);
-/*
+    }
+
+    /*
+     * Pre Depth
+     */
+    {
+        CD3DX12_HEAP_PROPERTIES heapType(D3D12_HEAP_TYPE_DEFAULT);
+
+        D3D12_CLEAR_VALUE depthOptimizedClearValue = {};
+        depthOptimizedClearValue.Format = DXGI_FORMAT_R32_FLOAT;
+        depthOptimizedClearValue.Color[0] = 0.0f;
+        depthOptimizedClearValue.Color[1] = 0.0f;
+        depthOptimizedClearValue.Color[2] = 0.0f;
+        depthOptimizedClearValue.Color[3] = 0.0f;
+
+        auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32_FLOAT, render->width, render->height, 1, 0, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+        check_hresult(render->device->CreateCommittedResource(
+            &heapType,
+            D3D12_HEAP_FLAG_NONE,
+            &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            &depthOptimizedClearValue,
+            IID_PPV_ARGS(render->preDepth.put())
+        ));
+        render->preDepth->SetName(L"DepthBufferUAV");
+
+        render->preDepthRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvBaseHandle, (int)RenderTargets::PreDepthBuffer, render->rtvDescriptorSize);
+        render->device->CreateRenderTargetView(render->preDepth.get(), nullptr, render->preDepthRTV);
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = 1;
+        srvDesc.Texture2D.MostDetailedMip = 0;
+        srvDesc.Texture2D.PlaneSlice = 0;
+        srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+        render->device->CreateShaderResourceView(render->preDepth.get(), &srvDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), PRE_DEPTHBUFFER_SRV, render->uniDescriptorSize));
+
         D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
         uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
         uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
         uavDesc.Texture2D.MipSlice = 0;
         uavDesc.Texture2D.PlaneSlice = 0;
-        render->device->CreateUnorderedAccessView(render->depthStencil.get(), nullptr, &uavDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), DEPTHBUFFER_SRV, render->uniDescriptorSize));
-*/
+        render->device->CreateUnorderedAccessView(render->preDepth.get(), nullptr, &uavDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(render->uniHeap->GetCPUDescriptorHandleForHeapStart(), PRE_DEPTHBUFFER_UAV, render->uniDescriptorSize));
     }
 
     /*
@@ -1631,13 +1670,13 @@ static void RebuildScene(Render* render)
         D3D12_RAYTRACING_INSTANCE_DESC* instanceDescs;
         render->tlasInstances.resource->Map(0, nullptr, reinterpret_cast<void**>(&instanceDescs));
 
-        UINT currInstance = 0;
-        for (UINT ii = 0; ii < render->numInstances; ++ii)
+        UINT32 globalClusterIndex = 0;
+        for (UINT32 ii = 0; ii < render->numInstances; ++ii)
         {
             const Instance& instance = render->instancesCpu[ii];
             const Mesh& mesh = render->meshesCpu[instance.MeshIndex];
 
-            for (UINT ic = mesh.ClusterStart; ic < mesh.ClusterStart + mesh.ClusterCount; ++ic)
+            for (UINT32 ic = mesh.ClusterStart; ic < mesh.ClusterStart + mesh.ClusterCount; ++ic)
             {
                 D3D12_RAYTRACING_INSTANCE_DESC instanceDesc = {
                     .Transform = {
@@ -1645,14 +1684,14 @@ static void RebuildScene(Render* render)
                         { instance.ModelMatrix.m12, instance.ModelMatrix.m22, instance.ModelMatrix.m32, instance.ModelMatrix.m42 },
                         { instance.ModelMatrix.m13, instance.ModelMatrix.m23, instance.ModelMatrix.m33, instance.ModelMatrix.m43 },
                     },
-                    .InstanceID = ii,
-                    .InstanceMask = 0,
+                    .InstanceID = globalClusterIndex,
+                    .InstanceMask = 0xff,
                     .InstanceContributionToHitGroupIndex = 0,
-                    .Flags = 0,
+                    .Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE | D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE,
                     .AccelerationStructure = blasAddrs[ic],
                 };
-                instanceDescs[currInstance] = instanceDesc;
-                currInstance += 1;
+                instanceDescs[globalClusterIndex] = instanceDesc;
+                globalClusterIndex += 1; 
             }
         }
 
@@ -1661,7 +1700,7 @@ static void RebuildScene(Render* render)
         D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {
             .Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL,
             .Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE,
-            .NumDescs = currInstance,
+            .NumDescs = globalClusterIndex,
             .DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY,
             .InstanceDescs = render->tlasInstances.resource->GetGPUVirtualAddress()
         };
@@ -1928,14 +1967,13 @@ void Draw(Render* render)
             D3D12_RESOURCE_BARRIER barriers[] = {
                 CD3DX12_RESOURCE_BARRIER::UAV(render->tlas.resource.get()),
                 CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->preDepth.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
             };
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
         }
 
         render->commandList->RSSetViewports(1, &render->viewport);
         render->commandList->RSSetScissorRects(1, &render->scissorRect);
-        render->commandList->ClearDepthStencilView(render->depthStencilDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
         render->commandList->SetPipelineState1(render->rayTraceSO.get());
         render->commandList->SetComputeRootSignature(render->drawRootSignature.get());
@@ -1951,9 +1989,20 @@ void Draw(Render* render)
 
         {
             D3D12_RESOURCE_BARRIER barriers[] = {
+                CD3DX12_RESOURCE_BARRIER::Transition(render->preDepth.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST),
+            };
+            render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
+
+        render->commandList->CopyResource(render->depthStencil.get(), render->preDepth.get());
+
+        {
+            D3D12_RESOURCE_BARRIER barriers[] = {
                 CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ),
                 CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->preDepth.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_GENERIC_READ),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ),
             };
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
         }
@@ -2029,8 +2078,17 @@ void Draw(Render* render)
             D3D12_RESOURCE_BARRIER barriers[] = {
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
             };
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
+        }
+
+        // Clear vBuffer UAV
+        {
+            CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle(render->uniHeapCpuMirror->GetCPUDescriptorHandleForHeapStart(), VBUFFER_UAV, render->uniDescriptorSize);
+            CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle(render->uniHeap->GetGPUDescriptorHandleForHeapStart(), VBUFFER_UAV, render->uniDescriptorSize);
+            UINT values[4] = { 0xFFFFFFFF, 0, 0, 0 };
+            render->commandList->ClearUnorderedAccessViewUint(gpuHandle, cpuHandle, render->vBuffer.get(), values, 0, nullptr);
         }
 
         // Cull instances
@@ -2053,7 +2111,7 @@ void Draw(Render* render)
             D3D12_RESOURCE_BARRIER barriers[] = {
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
                 CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
-                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET),
+                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RENDER_TARGET),
                 CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE),
             };
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
@@ -2063,8 +2121,6 @@ void Draw(Render* render)
         render->commandList->RSSetViewports(1, &render->viewport);
         render->commandList->RSSetScissorRects(1, &render->scissorRect);
         render->commandList->ClearDepthStencilView(render->depthStencilDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-        float color[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-        render->commandList->ClearRenderTargetView(render->vBufferRTV, color, 0, nullptr);
         render->commandList->OMSetRenderTargets(1, &render->vBufferRTV, FALSE, &render->depthStencilDSV);
         render->commandList->SetGraphicsRootSignature(render->drawRootSignature.get());
         render->commandList->SetPipelineState(render->drawMeshPSO.get());

@@ -127,7 +127,7 @@ void main(uint2 dtid : SV_DispatchThreadID)
     uint v = vBuffer[dtid];
     if (constants.DebugMode == DEBUG_MODE_SHOW_TRIANGLES)
     {
-        if (d >= 1.0f || v == 0xffffffff)
+        if (v == 0xffffffff)
         {
             colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
             return;
@@ -138,7 +138,7 @@ void main(uint2 dtid : SV_DispatchThreadID)
     }
     else if (constants.DebugMode == DEBUG_MODE_SHOW_CLUSTERS)
     {
-        if (d >= 1.0f || v == 0xffffffff)
+        if (v == 0xffffffff)
         {
             colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
             return;
@@ -158,7 +158,7 @@ void main(uint2 dtid : SV_DispatchThreadID)
     }
     else if (constants.DebugMode == DEBUG_MODE_SHOW_INSTANCES)
     {
-        if (d >= 1.0f || v == 0xffffffff)
+        if (v == 0xffffffff)
         {
             colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
             return;
@@ -178,7 +178,7 @@ void main(uint2 dtid : SV_DispatchThreadID)
     }
     else if (constants.DebugMode == DEBUG_MODE_SHOW_MATERIALS)
     {
-        if (d >= 1.0f || v == 0xffffffff)
+        if (v == 0xffffffff)
         {
             colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
             return;
@@ -213,7 +213,7 @@ void main(uint2 dtid : SV_DispatchThreadID)
     }
 	else
     {
-        if (d >= 1.0f || v == 0xffffffff)
+        if (v == 0xffffffff)
         {
             colorBuffer[dtid] = float4(0.0f, 0.2f, 0.4f, 1.0f);
             return;

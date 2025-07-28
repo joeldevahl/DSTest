@@ -3,6 +3,7 @@
 struct RayPayload
 {
     uint vBufferValue;
+    float depth;
 };
 
 [shader("raygeneration")]
@@ -49,13 +50,15 @@ void RayGeneration()
 
         visibleInstancesCounter.Store(0, numInstances);
         visibleClustersCounter.Store(0, outNumClusters);
+        visibleClustersCounter.Store(4, 0);
+        visibleClustersCounter.Store(8, 0);
     }
 
     float3 p[2];
     for (int z = 0; z <= 1; z += 1)
     {
-        float2 ndc = idx / size;
-        float4 clipPos = float4(ndc.x * 2.0f - 1.0f, ndc.y * 2.0f - 1.0f, z == 0 ? 0.0f : 1.0f, 1.0f);
+        float2 ndc = (idx + 0.5) / size;
+        float4 clipPos = float4(ndc.x * 2.0f - 1.0f, 1.0f - ndc.y * 2.0f, z == 0 ? 0.0f : 1.0f, 1.0f);
         float4 worldPos = mul(constants.CullingCamera.InverseViewProjectionMatrix, clipPos);
         worldPos /= worldPos.w;
 		p[z] = float3(worldPos.x, worldPos.y, worldPos.z);
@@ -73,17 +76,25 @@ void RayGeneration()
 
     RWTexture2D<uint> vBuffer = ResourceDescriptorHeap[VBUFFER_UAV];
     vBuffer[idx] = payload.vBufferValue;
+
+    RWTexture2D<float> preDepth = ResourceDescriptorHeap[PRE_DEPTHBUFFER_UAV];
+    preDepth[idx] = payload.depth;
 }
 
 [shader("miss")]
 void Miss(inout RayPayload payload)
 {
     payload.vBufferValue = 0xFFFFFFFF;
+    payload.depth = 1.0;
 }
 
 [shader("closesthit")]
 void ClosestHit(inout RayPayload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
-    // TODO: how to get visible cluster from InstanceID?
     payload.vBufferValue = (InstanceID() << 8) | (PrimitiveIndex() & 0x000000FF);
+
+    float4 hitPositionWorld = float4(WorldRayOrigin() + RayTCurrent() * WorldRayDirection(), 1.0);
+    float4 hitPositionNDC = mul(constants.DrawingCamera.ViewProjectionMatrix, hitPositionWorld);
+    hitPositionNDC /= hitPositionNDC.w;
+    payload.depth = hitPositionNDC.z;
 }
