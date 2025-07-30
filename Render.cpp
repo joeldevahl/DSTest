@@ -10,7 +10,7 @@
 #include "imgui.h"
 #include "imgui_internal.h" // For PushItemFlag
 #include "imgui_impl_win32.h"
-#include "imgui_impl_dx12.h"
+#include "imgui_impl_dx12.h" 
 
 using winrt::com_ptr;
 using winrt::check_hresult;
@@ -196,14 +196,13 @@ struct Render
     UINT height = 720;
     HWND hwnd;
 
-    bool supportsWorkGraph = false;
     bool supportsRayTracing = false;
 
     com_ptr<IDXGIFactory6> dxgiFactory;
     com_ptr<ID3D12Device14> device;
     com_ptr<IDStorageFactory> storageFactory;
     com_ptr<ID3D12CommandQueue> commandQueue;
-    com_ptr<IDStorageQueue> storageQueue;
+    com_ptr<IDStorageQueue3> storageQueue;
     com_ptr<IDXGISwapChain3> swapChain;
     UINT frameIndex = 0;
 
@@ -403,7 +402,7 @@ static HRESULT ReadDataFromFile(LPCWSTR filename, byte** data, UINT* size)
     return S_OK;
 }
 
-static HRESULT WriteDataToFile(LPCWSTR filename, const byte* data, UINT size)
+static HRESULT WriteDataToFile(LPCWSTR filename, const byte* data, SIZE_T size)
 {
     CREATEFILE2_EXTENDED_PARAMETERS extendedParams = {};
     extendedParams.dwSize = sizeof(CREATEFILE2_EXTENDED_PARAMETERS);
@@ -518,10 +517,8 @@ static bool CompileShaders(Render* render)
     render->instanceCullingBlobCS = CompileShader(render, L"InstanceCulling", L"main", L"InstanceCulling.hlsl", L"cs_6_6");
     render->clusterCullingBlobCS = CompileShader(render, L"ClusterCulling", L"main", L"ClusterCulling.hlsl", L"cs_6_6");
     render->materialBlobCS = CompileShader(render, L"Material", L"main", L"Material.hlsl", L"cs_6_6");
-    if (render->supportsWorkGraph)
-        render->workGraphBlob = CompileShader(render, L"WorkGraph", nullptr, L"WorkGraph.hlsl", L"lib_6_9");
     if (render->supportsRayTracing)
-        render->rayTraceBlob = CompileShader(render, L"RayTrace", nullptr, L"RayTrace.hlsl", L"lib_6_6");
+        render->rayTraceBlob = CompileShader(render, L"RayTrace", nullptr, L"VBufferRayTrace.hlsl", L"lib_6_6");
 
     return true;
 }
@@ -733,12 +730,6 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
         com_ptr<IDXGIAdapter4> hardwareAdapter;
         GetHardwareAdapter(render->dxgiFactory.get(), hardwareAdapter.put());
         check_hresult(D3D12CreateDevice(hardwareAdapter.get(), D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(render->device.put())));
-    }
-
-    {
-        D3D12_FEATURE_DATA_D3D12_OPTIONS21 Options = {};
-        render->device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS21, &Options, sizeof(Options));
-        render->supportsWorkGraph = Options.WorkGraphsTier != D3D12_WORK_GRAPHS_TIER_NOT_SUPPORTED;
     }
 
     {
@@ -2007,63 +1998,6 @@ void Draw(Render* render)
             render->commandList->ResourceBarrier(_countof(barriers), barriers);
         }
     }
-    else if (render->supportsWorkGraph && render->workGraph)
-    {
-        // Work Graph execution
-        {
-            D3D12_RESOURCE_BARRIER barriers[] = {
-                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
-                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstances.resource.get()),
-                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
-                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
-                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET),
-                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE),
-            };
-            render->commandList->ResourceBarrier(_countof(barriers), barriers);
-        }
-
-        render->commandList->SetComputeRootSignature(render->globalRootSignature.get());
-        render->commandList->SetGraphicsRootSignature(render->globalRootSignature.get());
-
-        render->commandList->RSSetViewports(1, &render->viewport);
-        render->commandList->RSSetScissorRects(1, &render->scissorRect);
-        render->commandList->ClearDepthStencilView(render->depthStencilDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-        float color[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-        render->commandList->ClearRenderTargetView(render->vBufferRTV, color, 0, nullptr);
-        render->commandList->OMSetRenderTargets(1, &render->vBufferRTV, FALSE, &render->depthStencilDSV);
-        render->commandList->SetGraphicsRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
-        render->commandList->SetComputeRootConstantBufferView(0, render->constantBuffer.resource->GetGPUVirtualAddress() + sizeof(Constants) * render->frameIndex);
-
-        D3D12_SET_PROGRAM_DESC setProg = {};
-        setProg.Type = D3D12_PROGRAM_TYPE_WORK_GRAPH;
-        setProg.WorkGraph.ProgramIdentifier = render->workGraphIdentifier;
-        setProg.WorkGraph.Flags = D3D12_SET_WORK_GRAPH_FLAG_INITIALIZE;
-        setProg.WorkGraph.BackingMemory = render->workGraphBackingMemory.addressRange;
-        setProg.WorkGraph.NodeLocalRootArgumentsTable = render->workGraphNodeLocalRootArgumentsTable.addressRangeAndStride;
-        render->commandList->SetProgram(&setProg);
-
-        // Spawn work
-        D3D12_DISPATCH_GRAPH_DESC desc = {};
-        desc.Mode = D3D12_DISPATCH_MODE_NODE_CPU_INPUT;
-        desc.NodeCPUInput.EntrypointIndex = 0; // just one entrypoint in this graph
-        desc.NodeCPUInput.NumRecords = 1;
-        desc.NodeCPUInput.RecordStrideInBytes = sizeof(Constants);
-        desc.NodeCPUInput.pRecords = &render->constantBufferData;
-        render->commandList->DispatchGraph(&desc);
-
-        {
-            D3D12_RESOURCE_BARRIER barriers[] = {
-                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstancesCounter.resource.get()),
-                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleInstances.resource.get()),
-                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClustersCounter.resource.get()),
-                CD3DX12_RESOURCE_BARRIER::UAV(render->visibleClusters.resource.get()),
-                CD3DX12_RESOURCE_BARRIER::Transition(render->vBuffer.get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ),
-                CD3DX12_RESOURCE_BARRIER::Transition(render->depthStencil.get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ),
-                CD3DX12_RESOURCE_BARRIER::Transition(render->colorBuffer.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-            };
-            render->commandList->ResourceBarrier(_countof(barriers), barriers);
-        }
-    }
     else
     {
 
@@ -2163,19 +2097,7 @@ void Draw(Render* render)
     ImGui::Checkbox("Vizualize Instances", &render->visualizeInstances);
     ImGui::Checkbox("Vizualize Clusters", &render->visualizeClusters);
 
-    if (!render->supportsWorkGraph)
-    {
-        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
-    }
-    ImGui::Checkbox("Work Graph", &render->workGraph);
-    if (!render->supportsWorkGraph)
-    {
-        ImGui::PopItemFlag();
-        ImGui::PopStyleVar();
-    }
-
-    if (!render->supportsRayTracing)
+        if (!render->supportsRayTracing)
     {
         ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
