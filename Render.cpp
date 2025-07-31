@@ -196,8 +196,6 @@ struct Render
     UINT height = 720;
     HWND hwnd;
 
-    bool supportsRayTracing = false;
-
     com_ptr<IDXGIFactory6> dxgiFactory;
     com_ptr<ID3D12Device14> device;
     com_ptr<IDStorageFactory> storageFactory;
@@ -316,7 +314,7 @@ struct Render
     com_ptr<ID3DBlob> clusterCullingBlobCS;
     com_ptr<ID3DBlob> materialBlobCS;
     com_ptr<ID3DBlob> workGraphBlob;
-    com_ptr<ID3DBlob> rayTraceBlob;
+    com_ptr<ID3DBlob> vBufferRayTraceBlob;
     com_ptr<ID3D12RootSignature> globalRootSignature;
 
     bool recreateResources = true;
@@ -517,8 +515,7 @@ static bool CompileShaders(Render* render)
     render->instanceCullingBlobCS = CompileShader(render, L"InstanceCulling", L"main", L"InstanceCulling.hlsl", L"cs_6_6");
     render->clusterCullingBlobCS = CompileShader(render, L"ClusterCulling", L"main", L"ClusterCulling.hlsl", L"cs_6_6");
     render->materialBlobCS = CompileShader(render, L"Material", L"main", L"Material.hlsl", L"cs_6_6");
-    if (render->supportsRayTracing)
-        render->rayTraceBlob = CompileShader(render, L"RayTrace", nullptr, L"VBufferRayTrace.hlsl", L"lib_6_6");
+    render->vBufferRayTraceBlob = CompileShader(render, L"RayTrace", nullptr, L"VBufferRayTrace.hlsl", L"lib_6_6");
 
     return true;
 }
@@ -735,7 +732,7 @@ void Initialize(Render* render, HWND hwnd, bool useWarp)
     {
         D3D12_FEATURE_DATA_D3D12_OPTIONS5 Options = {};
         render->device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &Options, sizeof(Options));
-        render->supportsRayTracing = Options.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1;
+        assert(Options.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1);
     }
 
     {
@@ -1373,10 +1370,9 @@ static void RecreateResources(Render* render) {
     }
 #endif
 
-    if (render->supportsRayTracing)
     {
         D3D12_DXIL_LIBRARY_DESC lib = {
-            { render->rayTraceBlob->GetBufferPointer(), render->rayTraceBlob->GetBufferSize() },
+            { render->vBufferRayTraceBlob->GetBufferPointer(), render->vBufferRayTraceBlob->GetBufferSize() },
             0,
             nullptr,
         };
@@ -1952,7 +1948,7 @@ void Draw(Render* render)
     };
     render->commandList->SetDescriptorHeaps(_countof(heaps), heaps);
 
-    if (render->supportsRayTracing && render->traceVisibility)
+    if (render->traceVisibility)
     {
         {
             D3D12_RESOURCE_BARRIER barriers[] = {
@@ -2097,17 +2093,7 @@ void Draw(Render* render)
     ImGui::Checkbox("Vizualize Instances", &render->visualizeInstances);
     ImGui::Checkbox("Vizualize Clusters", &render->visualizeClusters);
 
-        if (!render->supportsRayTracing)
-    {
-        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
-    }
-    ImGui::Checkbox("Ray Trace", &render->traceVisibility);
-    if (!render->supportsRayTracing)
-    {
-        ImGui::PopItemFlag(); 
-        ImGui::PopStyleVar();
-    }
+    ImGui::Checkbox("Ray Trace Visibility", &render->traceVisibility);
 
     ImGui::End();
     ImGui::Render();
