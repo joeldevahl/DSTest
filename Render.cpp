@@ -1751,9 +1751,9 @@ void Draw(Render* render)
         if (cam->pitch > PI_HALF) cam->pitch = PI_HALF;
         ImGui::ResetMouseDragDelta();
 
-        float4x4 rotMat = make_float4x4_rotation_z(cam->yaw)
+        float4x4 rotMat = make_float4x4_rotation_y(cam->yaw)
             * make_float4x4_rotation_x(cam->pitch);
-        float3 forward = float3(rotMat.m12, rotMat.m22, rotMat.m32);
+        float3 forward = float3(rotMat.m13, rotMat.m23, rotMat.m33);
         float3 right = float3(rotMat.m11, rotMat.m21, rotMat.m31);
 
         bool w_pressed = ImGui::IsKeyDown(ImGuiKey_W);
