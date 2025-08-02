@@ -8,6 +8,31 @@ using namespace Windows::Foundation::Numerics;
 using namespace DirectX;
 typedef UINT uint;
 typedef DirectX::XMUINT4 uint4;
+typedef DirectX::XMFLOAT3X3 float3x3;
+
+inline float3x3 float3x3_from_float4x4(const float4x4& m)
+{
+	return float3x3(
+		m.m11, m.m12, m.m13,
+		m.m21, m.m22, m.m23,
+		m.m31, m.m32, m.m33
+	);
+}
+
+inline float4x4 float4x4_clear_non3x3(const float4x4& m)
+{
+	float4x4 ret = m;
+
+	ret.m14 = 0.0f;
+	ret.m24 = 0.0f;
+	ret.m34 = 0.0f;
+	ret.m41 = 0.0f;
+	ret.m42 = 0.0f;
+	ret.m43 = 0.0f;
+	ret.m44 = 1.0f;
+
+	return ret;
+}
 
 struct Render;
 #define CB_ALIGN _declspec(align(256u)) 

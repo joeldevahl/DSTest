@@ -41,10 +41,42 @@ float GGXSpecular(in float m, in float3 n, in float3 h, in float3 v, in float3 l
 	return d * vis;
 }
 
+float CalcShadow(float3 pos, float3 lightDir)
+{
+    RayQuery<RAY_FLAG_CULL_NON_OPAQUE | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
+
+    RayDesc ray;
+    ray.Origin = pos;
+    ray.TMin = 1e-5f;
+    ray.Direction = lightDir;
+    ray.TMax = 1e10f;
+
+    RaytracingAccelerationStructure tlas = ResourceDescriptorHeap[TLAS_SRV];
+
+    q.TraceRayInline(
+        tlas,
+        RAY_FLAG_NONE,
+        0xFF,
+        ray);
+
+    q.Proceed();
+
+    if(q.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+    {
+        return 0.0;
+    }
+    else
+    {
+        return 1.0;
+    }
+}
+
 float3 CalcLighting(in float3 normal, in float3 lightDir, in float3 peakIrradiance,
 	in float3 diffuseAlbedo, in float3 specularAlbedo, in float roughness,
 	in float3 positionWS, in float3 cameraPosWS, in float3 msEnergyCompensation)
 {
+    float shadow = CalcShadow(positionWS, lightDir);
+
 	float3 lighting = diffuseAlbedo * (1.0f / 3.14159f);
 
 	float3 view = normalize(cameraPosWS - positionWS);
@@ -60,7 +92,7 @@ float3 CalcLighting(in float3 normal, in float3 lightDir, in float3 peakIrradian
 		lighting += specular * fresnel * msEnergyCompensation;
 	}
 
-	return lighting * nDotL * peakIrradiance;
+	return shadow * lighting * nDotL * peakIrradiance;
 }
 
 float3 Barycentric(float3 p, float3 a, float3 b, float3 c)
@@ -84,17 +116,34 @@ float3 Barycentric(float3 p, float3 a, float3 b, float3 c)
 }
 
 float3 ReprojectDepth(float depth, float2 uv) {
-	float4 ndc = float4(uv * 2.0f - 1.0f, depth, 1.0f);
+	float4 ndc = float4(uv * 2.0f - 1.0f, depth, 1.0);
 	ndc.y *= -1.0f;
 	float4 wp = mul(constants.DrawingCamera.InverseProjectionMatrix, ndc);
 	return wp.xyz / wp.w;
 }
 
-float3 TransformVertex(float3 v, float4x4 ModelMatrix, float4x4 ViewMatrix)
+float3 TransformVertexToView(float3 v, float4x4 ModelMatrix, float4x4 ViewMatrix)
 {
-	float4 wv = mul(ModelMatrix, float4(v, 1.0f));
+	float4 wv = mul(ModelMatrix, float4(v, 1.0));
 	wv = mul(ViewMatrix, wv);
 	return wv.xyz / wv.w;
+}
+
+float3 TransformVertexToWorld(float3 v, float4x4 ModelMatrix)
+{
+	float4 wv = mul(ModelMatrix, float4(v, 1.0));
+	return wv.xyz / wv.w;
+}
+
+float3 TransformNormalToWorld(float3 n, float3x3 NormalMatrix)
+{
+	return normalize(mul(NormalMatrix, n));
+}
+
+float3 ViewToWorld(float3 vp, float4x4 InverseViewProjectionMatrix)
+{
+    float4 wp = mul(InverseViewProjectionMatrix, float4(vp, 1.0));
+    return wp.xyz / wp.w;
 }
 
 uint HashInt(uint x)
@@ -237,10 +286,11 @@ void main(uint2 dtid : SV_DispatchThreadID)
 
         float2 uv = dtid * float2(1.0f / 1280.0f, 1.0f / 720.0f);
         float3 vp = ReprojectDepth(d, uv);
+        float3 wp = ViewToWorld(vp, constants.DrawingCamera.InverseViewProjectionMatrix);
 
-        float3 vv0 = TransformVertex(v0, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
-        float3 vv1 = TransformVertex(v1, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
-        float3 vv2 = TransformVertex(v2, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
+        float3 vv0 = TransformVertexToView(v0, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
+        float3 vv1 = TransformVertexToView(v1, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
+        float3 vv2 = TransformVertexToView(v2, instance.ModelMatrix, constants.DrawingCamera.ViewMatrix);
 
         float3 b = Barycentric(vp, vv0, vv1, vv2);
 
@@ -248,21 +298,20 @@ void main(uint2 dtid : SV_DispatchThreadID)
         float3 n1 = GetNormal(cluster.VertexStart + tri.y);
         float3 n2 = GetNormal(cluster.VertexStart + tri.z);
 
-        float3 n = n0 * b.x + n1 * b.y + n2 * b.z;
-        float3 p = vv0 * b.x + vv1 + b.y + vv2 * b.z;
+        float3 wn = TransformNormalToWorld(n0 * b.x + n1 * b.y + n2 * b.z, instance.NormalMatrix);
 
-        float3 l = normalize(float3(10.0f, 10.0f, 10.0f));
+        float3 wl = normalize(float3(10.0f, 10.0f, 10.0f));
 
         Material material = GetMaterial(instance.MaterialIndex);
 
         float3 color = CalcLighting(
-		    n,
-		    l,
+		    wn,
+		    wl,
 		    float3(1.0f, 1.0f, 1.0f),
 		    material.Color.xyz,
-		    material.Color.zyz,
+		    float3(0.0, 0.0, 0.0), //material.Color.zyz,
 		    material.Roughness,
-		    p,
+		    wp,
 		    float3(0.0f, 0.0f, 0.0f),
 		    float3(1.0f, 1.0f, 1.0f));
         colorBuffer[dtid] = float4(color, 1.0f);

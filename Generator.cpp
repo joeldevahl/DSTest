@@ -79,8 +79,13 @@ static void ConvertNodeHierarchy(cgltf_data* data, std::vector<Instance>& instan
 
 			float4x4 modelMat = scaleMat * rotationMat * translationMat;
 
+			float4x4 inverseModelMat;
+			invert(float4x4_clear_non3x3(modelMat), &inverseModelMat);
+			float4x4 inverseTransposeModelMat = transpose(inverseModelMat);
 
-			instances.push_back(Instance{ modelMat, meshID, materialID, TransformAABB(meshes[meshID].Box, modelMat)});
+			float3x3 normalMatrix = float3x3_from_float4x4(inverseTransposeModelMat);
+
+			instances.push_back(Instance{ modelMat, normalMatrix, meshID, materialID, TransformAABB(meshes[meshID].Box, modelMat)});
 		}
 	}
 		

@@ -320,6 +320,7 @@ struct Render
     bool recreateResources = true;
     bool reloadScene = true;
     bool rebuildScene = true;
+    bool compileShaders = true;
     bool visualizeInstances = false;
     bool visualizeClusters = false;
     bool fastMove = false;
@@ -862,7 +863,7 @@ static void RecreateResources(Render* render) {
         {
             CD3DX12_HEAP_PROPERTIES heapType(D3D12_HEAP_TYPE_DEFAULT);
 
-			D3D12_CLEAR_VALUE vBufferOptimizedClearValue = {};
+            D3D12_CLEAR_VALUE vBufferOptimizedClearValue = {};
             vBufferOptimizedClearValue.Format = DXGI_FORMAT_R32_UINT;
             vBufferOptimizedClearValue.Color[0] = 0.0f;
             vBufferOptimizedClearValue.Color[1] = 0.0f;
@@ -871,23 +872,23 @@ static void RecreateResources(Render* render) {
 
             auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32_UINT, render->width, render->height, 1, 0, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
-			check_hresult(render->device->CreateCommittedResource(
-				&heapType,
-				D3D12_HEAP_FLAG_NONE,
-				&desc,
-				D3D12_RESOURCE_STATE_GENERIC_READ,
-				&vBufferOptimizedClearValue,
-				IID_PPV_ARGS(render->vBuffer.put())
-			));
+            check_hresult(render->device->CreateCommittedResource(
+                &heapType,
+                D3D12_HEAP_FLAG_NONE,
+                &desc,
+                D3D12_RESOURCE_STATE_GENERIC_READ,
+                &vBufferOptimizedClearValue,
+                IID_PPV_ARGS(render->vBuffer.put())
+            ));
             render->vBuffer->SetName(L"VBuffer");
 
             render->vBufferRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvBaseHandle, (int)RenderTargets::VBuffer, render->rtvDescriptorSize);
             render->device->CreateRenderTargetView(render->vBuffer.get(), nullptr, render->vBufferRTV);
 
-			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-			srvDesc.Format = DXGI_FORMAT_R32_UINT;
-			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+            srvDesc.Format = DXGI_FORMAT_R32_UINT;
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             srvDesc.Texture2D.MipLevels = 1;
             srvDesc.Texture2D.MostDetailedMip = 0;
             srvDesc.Texture2D.PlaneSlice = 0;
@@ -909,14 +910,14 @@ static void RecreateResources(Render* render) {
 
             auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8G8B8A8_UNORM, render->width, render->height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
 
-			check_hresult(render->device->CreateCommittedResource(
-				&heapType,
-				D3D12_HEAP_FLAG_NONE,
-				&desc,
-				D3D12_RESOURCE_STATE_COPY_SOURCE,
-				nullptr,
-				IID_PPV_ARGS(render->colorBuffer.put())
-			));
+            check_hresult(render->device->CreateCommittedResource(
+                &heapType,
+                D3D12_HEAP_FLAG_NONE,
+                &desc,
+                D3D12_RESOURCE_STATE_COPY_SOURCE,
+                nullptr,
+                IID_PPV_ARGS(render->colorBuffer.put())
+            ));
             render->colorBuffer->SetName(L"Color");
 
             render->colorBufferRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvBaseHandle, (int)RenderTargets::ColorBuffer, render->rtvDescriptorSize);
@@ -963,14 +964,14 @@ static void RecreateResources(Render* render) {
         render->depthStencilDSV = CD3DX12_CPU_DESCRIPTOR_HANDLE(dsvBaseHandle, (int)DepthStencilTargets::MainDepth, render->dsvDescriptorSize);
         render->device->CreateDepthStencilView(render->depthStencil.get(), &depthStencilDesc, render->depthStencilDSV);
 
-		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
-		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		srvDesc.Texture2D.MipLevels = 1;
-		srvDesc.Texture2D.MostDetailedMip = 0;
-		srvDesc.Texture2D.PlaneSlice = 0;
-		srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = 1;
+        srvDesc.Texture2D.MostDetailedMip = 0;
+        srvDesc.Texture2D.PlaneSlice = 0;
+        srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
 
         CD3DX12_CPU_DESCRIPTOR_HANDLE srvBaseHandle(render->uniHeap->GetCPUDescriptorHandleForHeapStart());
         CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(srvBaseHandle, DEPTHBUFFER_SRV, render->uniDescriptorSize);
@@ -1041,44 +1042,44 @@ static void RecreateResources(Render* render) {
     /*
      * Mesh and Instance Pool
      */
-	CreateBuffer(render, &render->instancesBuffer,
+    CreateBuffer(render, &render->instancesBuffer,
         BufferDesc(MAX_INSTANCES, sizeof(Instance))
         .WithName(L"InstancesBuffer")
         .WithSRV(INSTANCE_BUFFER_SRV));
-	CreateBuffer(render, &render->meshesBuffer,
+    CreateBuffer(render, &render->meshesBuffer,
         BufferDesc(MAX_MESHES, sizeof(Mesh))
         .WithName(L"MeshesBuffer")
         .WithSRV(MESH_BUFFER_SRV));
-	CreateBuffer(render, &render->clustersBuffer,
+    CreateBuffer(render, &render->clustersBuffer,
         BufferDesc(MAX_CLUSTERS, sizeof(Cluster))
         .WithName(L"ClustersBuffer")
         .WithSRV(CLUSTER_BUFFER_SRV));
-	CreateBuffer(render, &render->positionsBuffer,
+    CreateBuffer(render, &render->positionsBuffer,
         BufferDesc(MAX_VERTICES, sizeof(float3))
         .WithName(L"PositionsBuffer")
         .WithSRV(POSITION_DATA_BUFFER_SRV)
         .WithRAW());
-	CreateBuffer(render, &render->normalsBuffer,
+    CreateBuffer(render, &render->normalsBuffer,
         BufferDesc(MAX_VERTICES, sizeof(float3))
         .WithName(L"NormalsBuffer")
         .WithSRV(NORMAL_DATA_BUFFER_SRV)
         .WithRAW());
-	CreateBuffer(render, &render->tangentsBuffer,
+    CreateBuffer(render, &render->tangentsBuffer,
         BufferDesc(MAX_VERTICES, sizeof(float4))
         .WithName(L"TangentsBuffer")
         .WithSRV(TANGENT_DATA_BUFFER_SRV)
         .WithRAW());
-	CreateBuffer(render, &render->texcoordsBuffer,
+    CreateBuffer(render, &render->texcoordsBuffer,
         BufferDesc(MAX_VERTICES, sizeof(float2))
         .WithName(L"TexcoordsBuffer")
         .WithSRV(TEXCOORD_DATA_BUFFER_SRV)
         .WithRAW());
-	CreateBuffer(render, &render->indexDataBuffer,
+    CreateBuffer(render, &render->indexDataBuffer,
         BufferDesc(MAX_INDICES, sizeof(UINT))
         .WithName(L"IndexDataBuffer")
         .WithSRV(INDEX_DATA_BUFFER_SRV)
         .WithRAW());
-	CreateBuffer(render, &render->materialsBuffer,
+    CreateBuffer(render, &render->materialsBuffer,
         BufferDesc(MAX_MATERIALS, sizeof(Material))
         .WithName(L"MaterialsBuffer")
         .WithSRV(MATERIAL_BUFFER_SRV));
@@ -1092,9 +1093,9 @@ static void RecreateResources(Render* render) {
     /*
      * Intermediate buffers
      */
-	CreateBuffer(render, &render->visibleInstances,
+    CreateBuffer(render, &render->visibleInstances,
         BufferDesc(MAX_INSTANCES, sizeof(UINT))
-        .WithName(L"VisibleInstancesBuffer") 
+        .WithName(L"VisibleInstancesBuffer")
         .WithSRV(VISIBLE_INSTANCES_SRV)
         .WithUAV(VISIBLE_INSTANCES_UAV)
         .WithRAW());
@@ -1177,9 +1178,10 @@ static void RecreateResources(Render* render) {
 
         check_hresult(render->device->CreateRootSignature(0, rootBlob->GetBufferPointer(), rootBlob->GetBufferSize(), IID_PPV_ARGS(render->drawWireRootSignature.put())));
     }
+}
 
-    CompileShaders(render);
-
+void CreatePSOs(Render* render)
+{
     /*
      * VBuffer PSO
      */
@@ -1271,104 +1273,7 @@ static void RecreateResources(Render* render) {
 
 			check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->materialPSO.put())));
         }
-
-        /*
-        {
-            D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
-            desc.pRootSignature = render->drawRootSignature.get();
-            desc.CS = { render->rayTraceBlobCS->GetBufferPointer(), render->rayTraceBlobCS->GetBufferSize() };
-
-            check_hresult(render->device->CreateComputePipelineState(&desc, IID_PPV_ARGS(render->rayTracePSO.put())));
-        }
-        */
     }
-
-    /*
-    * Work Graph
-    */
-#if 0
-    if (render->supportsWorkGraph)
-    {
-        render->device->CreateRootSignatureFromSubobjectInLibrary(0,
-            render->workGraphBlob->GetBufferPointer(),
-            render->workGraphBlob->GetBufferSize(),
-            L"MeshNodesGlobalRS",
-            IID_PPV_ARGS(render->globalRootSignature.put()));
-
-        CD3DX12_STATE_OBJECT_DESC desc(D3D12_STATE_OBJECT_TYPE_EXECUTABLE);
-
-        CD3DX12_STATE_OBJECT_CONFIG_SUBOBJECT* config = desc.CreateSubobject<CD3DX12_STATE_OBJECT_CONFIG_SUBOBJECT>();
-        config->SetFlags(D3D12_STATE_OBJECT_FLAG_WORK_GRAPHS_USE_GRAPHICS_STATE_FOR_GLOBAL_ROOT_SIGNATURE);
-
-        CD3DX12_GLOBAL_ROOT_SIGNATURE_SUBOBJECT* rootSigDesc = desc.CreateSubobject<CD3DX12_GLOBAL_ROOT_SIGNATURE_SUBOBJECT>();
-        rootSigDesc->SetRootSignature(render->globalRootSignature.get());
-        
-        CD3DX12_DXIL_LIBRARY_SUBOBJECT* libraryDesc = desc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
-        CD3DX12_SHADER_BYTECODE libraryCode(render->workGraphBlob.get());
-        libraryDesc->SetDXILLibrary(&libraryCode);
-        libraryDesc->DefineExport(L"FrameSetup");
-        libraryDesc->DefineExport(L"InstanceCulling");
-        libraryDesc->DefineExport(L"ClusterCulling");
-        libraryDesc->DefineExport(L"MeshNode");
-        libraryDesc->DefineExport(L"MeshNodesLocalRS");
-
-        CD3DX12_DXIL_LIBRARY_SUBOBJECT* psDesc = desc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
-        CD3DX12_SHADER_BYTECODE psCode(render->vBufferBlobPS.get());
-        psDesc->SetDXILLibrary(&psCode);
-        psDesc->DefineExport(L"main");
-
-        CD3DX12_DXIL_SUBOBJECT_TO_EXPORTS_ASSOCIATION* localRootSignature = desc.CreateSubobject<CD3DX12_DXIL_SUBOBJECT_TO_EXPORTS_ASSOCIATION>();
-        localRootSignature->SetSubobjectNameToAssociate(L"MeshNodesLocalRS");
-        localRootSignature->AddExport(L"main");
-
-        CD3DX12_PRIMITIVE_TOPOLOGY_SUBOBJECT* primitiveTopology = desc.CreateSubobject<CD3DX12_PRIMITIVE_TOPOLOGY_SUBOBJECT>();
-        primitiveTopology->SetPrimitiveTopologyType(D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE);
-        CD3DX12_RENDER_TARGET_FORMATS_SUBOBJECT* rtFormats = desc.CreateSubobject<CD3DX12_RENDER_TARGET_FORMATS_SUBOBJECT>();
-        rtFormats->SetNumRenderTargets(1);
-        rtFormats->SetRenderTargetFormat(0, DXGI_FORMAT_R32_UINT);
-
-        CD3DX12_GENERIC_PROGRAM_SUBOBJECT* genericProgram = desc.CreateSubobject<CD3DX12_GENERIC_PROGRAM_SUBOBJECT>();
-        genericProgram->SetProgramName(L"myMeshNode0");
-        genericProgram->AddExport(L"MeshNode");
-        genericProgram->AddExport(L"main");
-        genericProgram->AddSubobject(*primitiveTopology);
-        genericProgram->AddSubobject(*rtFormats);
-
-        CD3DX12_WORK_GRAPH_SUBOBJECT* workGraphDesc = desc.CreateSubobject<CD3DX12_WORK_GRAPH_SUBOBJECT>();
-        workGraphDesc->IncludeAllAvailableNodes();
-        workGraphDesc->SetProgramName(L"HelloWorkGraph");
-
-        auto rootNode = workGraphDesc->CreateShaderNode(L"FrameSetup");
-
-        auto meshNode0 = workGraphDesc->CreateCommonProgramNodeOverrides(L"myMeshNode0");
-        meshNode0->NewName({ L"MeshNode", 0 });
-        meshNode0->LocalRootArgumentsTableIndex(0);
-
-        check_hresult(render->device->CreateStateObject(desc, IID_PPV_ARGS(render->workGraphSO.put())));
-
-        ID3D12StateObject* so = render->workGraphSO.get();
-
-        com_ptr<ID3D12StateObjectProperties1> workGraphSOProps;
-        so->QueryInterface(IID_PPV_ARGS(workGraphSOProps.put()));
-
-        render->workGraphIdentifier = workGraphSOProps->GetProgramIdentifier(L"HelloWorkGraph");
-
-        com_ptr<ID3D12WorkGraphProperties1> workGraphProps; 
-        so->QueryInterface(IID_PPV_ARGS(workGraphProps.put()));
-
-        UINT workGraphIndex = workGraphProps->GetWorkGraphIndex(L"HelloWorkGraph");
-
-        workGraphProps->SetMaximumInputRecords(workGraphIndex, 1, 1);
-        
-        D3D12_WORK_GRAPH_MEMORY_REQUIREMENTS memReqs = {};
-        workGraphProps->GetWorkGraphMemoryRequirements(workGraphIndex, &memReqs);
-        
-        if (memReqs.MaxSizeInBytes > 0)
-            CreateBuffer(render, &render->workGraphBackingMemory, BufferDesc(memReqs.MaxSizeInBytes, 1).WithUAV().WithName(L"WorkGraphBackingMemory"));
-
-        CreateBuffer(render, &render->workGraphNodeLocalRootArgumentsTable, BufferDesc(4, 4).WithName(L"WorkGraphNodeLocalRootArgumentsTable"));
-    }
-#endif
 
     {
         D3D12_DXIL_LIBRARY_DESC lib = {
@@ -1779,12 +1684,20 @@ void Draw(Render* render)
         WaitGraphicsIdle(render);
         RecreateResources(render);
         render->recreateResources = false; // assume success for now
+        render->reloadScene = true;
     }
 
     if (render->reloadScene)
     {
         ReloadScene(render);
         render->reloadScene = false; // assume success for now
+    }
+
+    if (render->compileShaders)
+    {
+        CompileShaders(render);
+        CreatePSOs(render);
+        render->compileShaders = false;
     }
 
     check_hresult(render->commandAllocators[render->frameIndex]->Reset());
@@ -1873,9 +1786,13 @@ void Draw(Render* render)
         invert(viewProj, &invViewProj);
         float4x4 invProj;
         invert(render->cullingCamera.projMat, &invProj);
+        float4x4 invView;
+        invert(render->cullingCamera.viewMat, &invView);
+        invView = float4x4_clear_non3x3(transpose(invView));
 
         render->constantBufferData.CullingCamera.ViewMatrix = render->cullingCamera.viewMat;
         render->constantBufferData.CullingCamera.ViewProjectionMatrix = viewProj;
+        render->constantBufferData.CullingCamera.InverseTransposeViewMatrix = invView;
         render->constantBufferData.CullingCamera.InverseProjectionMatrix = invProj;
         render->constantBufferData.CullingCamera.InverseViewProjectionMatrix = invViewProj;
         ExtractPlanesD3D((plane*)render->constantBufferData.CullingCamera.FrustumPlanes, viewProj, true);
@@ -1889,9 +1806,13 @@ void Draw(Render* render)
         invert(viewProj, &invViewProj);
         float4x4 invProj;
         invert(render->drawingCamera.projMat, &invProj);
+        float4x4 invView;
+        invert(render->drawingCamera.viewMat, &invView);
+        invView = float4x4_clear_non3x3(transpose(invView));
 
         render->constantBufferData.DrawingCamera.ViewMatrix = render->drawingCamera.viewMat;
         render->constantBufferData.DrawingCamera.ViewProjectionMatrix = viewProj;
+        render->constantBufferData.DrawingCamera.InverseTransposeViewMatrix = invView;
         render->constantBufferData.DrawingCamera.InverseProjectionMatrix = invProj;
         render->constantBufferData.DrawingCamera.InverseViewProjectionMatrix = invViewProj;
         ExtractPlanesD3D((plane*)render->constantBufferData.DrawingCamera.FrustumPlanes, viewProj, true);
@@ -2084,6 +2005,10 @@ void Draw(Render* render)
     ImGui::Begin("Hello, world!", nullptr, windowFlags);
     if (ImGui::Button("Recreate Resources"))
         render->recreateResources = true;
+    if (ImGui::Button("Reload Scene"))
+        render->reloadScene = true;
+    if (ImGui::Button("Recompile Shaders"))
+        render->compileShaders = true;
     ImGui::Text("Instances: %d (of %d)", numInstancesPassedCulling, render->numInstances);
     ImGui::Text("Clusters: %d (of %d)", numClustersPassedCulling, render->numClusters);
     const char* items[] = { "Normal", "Show Triangles", "Show Clusters", "Show Instances", "Show Materials", "Show Depth Buffer" };

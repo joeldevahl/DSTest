@@ -57,6 +57,7 @@ struct Camera
 {
     float4x4 ViewMatrix;
     float4x4 ViewProjectionMatrix;
+    float4x4 InverseTransposeViewMatrix; // Can't be 3x3 due to cbuffer alignment
     float4x4 InverseProjectionMatrix;
     float4x4 InverseViewProjectionMatrix;
     float4 FrustumPlanes[6];
@@ -76,6 +77,7 @@ CB_ALIGN struct Constants
 struct Instance
 {
     float4x4 ModelMatrix;
+    float3x3 NormalMatrix;
     uint MeshIndex;
     uint MaterialIndex;
 
